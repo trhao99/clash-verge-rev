@@ -29,10 +29,13 @@ static DEFAULT_BYPASS: &str =
     "127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,172.29.0.0/16,localhost,*.local,*.crashlytics.com,<local>";
 
 fn get_bypass() -> String {
-    let use_default = Config::verge().latest().use_default_bypass.unwrap_or(true);
+    let use_default = Config::verge()
+        .latest_ref()
+        .use_default_bypass
+        .unwrap_or(true);
     let res = {
         let verge = Config::verge();
-        let verge = verge.latest();
+        let verge = verge.latest_ref();
         verge.system_proxy_bypass.clone()
     };
     let custom_bypass = match res {
@@ -72,14 +75,14 @@ impl Sysopt {
         let _lock = self.update_sysproxy.lock().await;
 
         let port = Config::verge()
-            .latest()
+            .latest_ref()
             .verge_mixed_port
-            .unwrap_or(Config::clash().data().get_mixed_port());
+            .unwrap_or(Config::clash().latest_ref().get_mixed_port());
         let pac_port = IVerge::get_singleton_port();
 
         let (sys_enable, pac_enable, proxy_host) = {
             let verge = Config::verge();
-            let verge = verge.latest();
+            let verge = verge.latest_ref();
             (
                 verge.enable_system_proxy.unwrap_or(false),
                 verge.proxy_auto_config.unwrap_or(false),
@@ -153,7 +156,7 @@ impl Sysopt {
 
             let shell = app_handle.shell();
             let output = if pac_enable {
-                let address = format!("http://{}:{}/commands/pac", proxy_host, pac_port);
+                let address = format!("http://{proxy_host}:{pac_port}/commands/pac");
                 let output = shell
                     .command(sysproxy_exe.as_path().to_str().unwrap())
                     .args(["pac", address.as_str()])
@@ -162,7 +165,7 @@ impl Sysopt {
                     .unwrap();
                 output
             } else {
-                let address = format!("{}:{}", proxy_host, port);
+                let address = format!("{proxy_host}:{port}");
                 let bypass = get_bypass();
                 let output = shell
                     .command(sysproxy_exe.as_path().to_str().unwrap())
@@ -239,7 +242,7 @@ impl Sysopt {
 
     /// update the startup
     pub fn update_launch(&self) -> Result<()> {
-        let enable_auto_launch = { Config::verge().latest().enable_auto_launch };
+        let enable_auto_launch = { Config::verge().latest_ref().enable_auto_launch };
         let is_enable = enable_auto_launch.unwrap_or(false);
         logging!(info, true, "Setting auto-launch state to: {:?}", is_enable);
 
@@ -248,14 +251,14 @@ impl Sysopt {
         {
             if is_enable {
                 if let Err(e) = startup_shortcut::create_shortcut() {
-                    log::error!(target: "app", "创建启动快捷方式失败: {}", e);
+                    log::error!(target: "app", "创建启动快捷方式失败: {e}");
                     // 如果快捷方式创建失败，回退到原来的方法
                     self.try_original_autostart_method(is_enable);
                 } else {
                     return Ok(());
                 }
             } else if let Err(e) = startup_shortcut::remove_shortcut() {
-                log::error!(target: "app", "删除启动快捷方式失败: {}", e);
+                log::error!(target: "app", "删除启动快捷方式失败: {e}");
                 self.try_original_autostart_method(is_enable);
             } else {
                 return Ok(());
@@ -290,11 +293,11 @@ impl Sysopt {
         {
             match startup_shortcut::is_shortcut_enabled() {
                 Ok(enabled) => {
-                    log::info!(target: "app", "快捷方式自启动状态: {}", enabled);
+                    log::info!(target: "app", "快捷方式自启动状态: {enabled}");
                     return Ok(enabled);
                 }
                 Err(e) => {
-                    log::error!(target: "app", "检查快捷方式失败，尝试原来的方法: {}", e);
+                    log::error!(target: "app", "检查快捷方式失败，尝试原来的方法: {e}");
                 }
             }
         }
