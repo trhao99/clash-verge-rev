@@ -1,48 +1,78 @@
-import { useTranslation } from "react-i18next";
-import {
-  Typography,
-  Stack,
-  Divider,
-  Chip,
-  IconButton,
-  Tooltip,
-} from "@mui/material";
 import {
   InfoOutlined,
   SettingsOutlined,
-  WarningOutlined,
   AdminPanelSettingsOutlined,
   DnsOutlined,
   ExtensionOutlined,
 } from "@mui/icons-material";
-import { useVerge } from "@/hooks/use-verge";
-import { EnhancedCard } from "./enhanced-card";
-import useSWR from "swr";
-import { getSystemInfo } from "@/services/cmds";
-import { useNavigate } from "react-router-dom";
-import { version as appVersion } from "@root/package.json";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { check as checkUpdate } from "@tauri-apps/plugin-updater";
+import { Typography, Stack, Divider, Chip, IconButton } from "@mui/material";
 import { useLockFn } from "ahooks";
-import { showNotice } from "@/services/noticeService";
+import { useCallback, useEffect, useMemo, useReducer } from "react";
+import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router";
+
+import { useServiceInstaller } from "@/hooks/use-service-installer";
 import { useSystemState } from "@/hooks/use-system-state";
-import { useServiceInstaller } from "@/hooks/useServiceInstaller";
+import { useUpdate } from "@/hooks/use-update";
+import { useVerge } from "@/hooks/use-verge";
+import { getSystemInfo } from "@/services/cmds";
+import { showNotice } from "@/services/notice-service";
+import { version as appVersion } from "@root/package.json";
+
+import { EnhancedCard } from "./enhanced-card";
+
+interface SystemState {
+  osInfo: string;
+  lastCheckUpdate: string;
+}
+
+type SystemStateAction =
+  | { type: "set-os-info"; payload: string }
+  | { type: "set-last-check-update"; payload: string };
+
+const systemStateReducer = (
+  state: SystemState,
+  action: SystemStateAction,
+): SystemState => {
+  switch (action.type) {
+    case "set-os-info":
+      return { ...state, osInfo: action.payload };
+    case "set-last-check-update":
+      return { ...state, lastCheckUpdate: action.payload };
+    default:
+      return state;
+  }
+};
 
 export const SystemInfoCard = () => {
   const { t } = useTranslation();
   const { verge, patchVerge } = useVerge();
   const navigate = useNavigate();
-  const { isAdminMode, isSidecarMode, mutateRunningMode } = useSystemState();
+  const { isAdminMode, isSidecarMode } = useSystemState();
   const { installServiceAndRestartCore } = useServiceInstaller();
 
+  // 自动检查更新逻辑
+  const { checkUpdate: triggerCheckUpdate } = useUpdate(true, {
+    onSuccess: () => {
+      const now = Date.now();
+      localStorage.setItem("last_check_update", now.toString());
+      dispatchSystemState({
+        type: "set-last-check-update",
+        payload: new Date(now).toLocaleString(),
+      });
+    },
+  });
+
   // 系统信息状态
-  const [systemState, setSystemState] = useState({
+  const [systemState, dispatchSystemState] = useReducer(systemStateReducer, {
     osInfo: "",
     lastCheckUpdate: "-",
   });
 
   // 初始化系统信息
   useEffect(() => {
+    let timeoutId: number | undefined;
+
     getSystemInfo()
       .then((info) => {
         const lines = info.split("\n");
@@ -57,10 +87,10 @@ export const SystemInfoCard = () => {
             sysVersion = sysVersion.substring(sysName.length).trim();
           }
 
-          setSystemState((prev) => ({
-            ...prev,
-            osInfo: `${sysName} ${sysVersion}`,
-          }));
+          dispatchSystemState({
+            type: "set-os-info",
+            payload: `${sysName} ${sysVersion}`,
+          });
         }
       })
       .catch(console.error);
@@ -71,10 +101,10 @@ export const SystemInfoCard = () => {
       try {
         const timestamp = parseInt(lastCheck, 10);
         if (!isNaN(timestamp)) {
-          setSystemState((prev) => ({
-            ...prev,
-            lastCheckUpdate: new Date(timestamp).toLocaleString(),
-          }));
+          dispatchSystemState({
+            type: "set-last-check-update",
+            payload: new Date(timestamp).toLocaleString(),
+          });
         }
       } catch (e) {
         console.error("Error parsing last check update time", e);
@@ -83,37 +113,23 @@ export const SystemInfoCard = () => {
       // 如果启用了自动检查更新但没有记录，设置当前时间并延迟检查
       const now = Date.now();
       localStorage.setItem("last_check_update", now.toString());
-      setSystemState((prev) => ({
-        ...prev,
-        lastCheckUpdate: new Date(now).toLocaleString(),
-      }));
+      dispatchSystemState({
+        type: "set-last-check-update",
+        payload: new Date(now).toLocaleString(),
+      });
 
-      setTimeout(() => {
+      timeoutId = window.setTimeout(() => {
         if (verge?.auto_check_update) {
-          checkUpdate().catch(console.error);
+          triggerCheckUpdate().catch(console.error);
         }
       }, 5000);
     }
-  }, [verge?.auto_check_update]);
-
-  // 自动检查更新逻辑
-  useSWR(
-    verge?.auto_check_update ? "checkUpdate" : null,
-    async () => {
-      const now = Date.now();
-      localStorage.setItem("last_check_update", now.toString());
-      setSystemState((prev) => ({
-        ...prev,
-        lastCheckUpdate: new Date(now).toLocaleString(),
-      }));
-      return await checkUpdate();
-    },
-    {
-      revalidateOnFocus: false,
-      refreshInterval: 24 * 60 * 60 * 1000, // 每天检查一次
-      dedupingInterval: 60 * 60 * 1000, // 1小时内不重复检查
-    },
-  );
+    return () => {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [verge?.auto_check_update, dispatchSystemState, triggerCheckUpdate]);
 
   // 导航到设置页面
   const goToSettings = useCallback(() => {
@@ -140,15 +156,17 @@ export const SystemInfoCard = () => {
   // 检查更新
   const onCheckUpdate = useLockFn(async () => {
     try {
-      const info = await checkUpdate();
+      const info = await triggerCheckUpdate();
       if (!info?.available) {
-        showNotice("success", t("Currently on the Latest Version"));
+        showNotice.success(
+          "settings.components.verge.advanced.notifications.latestVersion",
+        );
       } else {
-        showNotice("info", t("Update Available"), 2000);
+        showNotice.info("shared.feedback.notifications.updateAvailable", 2000);
         goToSettings();
       }
-    } catch (err: any) {
-      showNotice("error", err.message || err.toString());
+    } catch (err) {
+      showNotice.error(err);
     }
   });
 
@@ -185,11 +203,11 @@ export const SystemInfoCard = () => {
           <>
             <AdminPanelSettingsOutlined
               sx={{ color: "primary.main", fontSize: 16 }}
-              titleAccess={t("Administrator Mode")}
+              titleAccess={t("home.components.systemInfo.badges.adminMode")}
             />
             <DnsOutlined
               sx={{ color: "success.main", fontSize: 16, ml: 0.5 }}
-              titleAccess={t("Service Mode")}
+              titleAccess={t("home.components.systemInfo.badges.serviceMode")}
             />
           </>
         );
@@ -197,21 +215,21 @@ export const SystemInfoCard = () => {
       return (
         <AdminPanelSettingsOutlined
           sx={{ color: "primary.main", fontSize: 16 }}
-          titleAccess={t("Administrator Mode")}
+          titleAccess={t("home.components.systemInfo.badges.adminMode")}
         />
       );
     } else if (isSidecarMode) {
       return (
         <ExtensionOutlined
           sx={{ color: "info.main", fontSize: 16 }}
-          titleAccess={t("Sidecar Mode")}
+          titleAccess={t("home.components.systemInfo.badges.sidecarMode")}
         />
       );
     } else {
       return (
         <DnsOutlined
           sx={{ color: "success.main", fontSize: 16 }}
-          titleAccess={t("Service Mode")}
+          titleAccess={t("home.components.systemInfo.badges.serviceMode")}
         />
       );
     }
@@ -222,13 +240,13 @@ export const SystemInfoCard = () => {
     if (isAdminMode) {
       // 判断是否同时处于服务模式
       if (!isSidecarMode) {
-        return t("Administrator + Service Mode");
+        return t("home.components.systemInfo.badges.adminServiceMode");
       }
-      return t("Administrator Mode");
+      return t("home.components.systemInfo.badges.adminMode");
     } else if (isSidecarMode) {
-      return t("Sidecar Mode");
+      return t("home.components.systemInfo.badges.sidecarMode");
     } else {
-      return t("Service Mode");
+      return t("home.components.systemInfo.badges.serviceMode");
     }
   };
 
@@ -237,11 +255,15 @@ export const SystemInfoCard = () => {
 
   return (
     <EnhancedCard
-      title={t("System Info")}
+      title={t("home.components.systemInfo.title")}
       icon={<InfoOutlined />}
       iconColor="error"
       action={
-        <IconButton size="small" onClick={goToSettings} title={t("Settings")}>
+        <IconButton
+          size="small"
+          onClick={goToSettings}
+          title={t("home.components.systemInfo.actions.settings")}
+        >
           <SettingsOutlined fontSize="small" />
         </IconButton>
       }
@@ -249,7 +271,7 @@ export const SystemInfoCard = () => {
       <Stack spacing={1.5}>
         <Stack direction="row" justifyContent="space-between">
           <Typography variant="body2" color="text.secondary">
-            {t("OS Info")}
+            {t("home.components.systemInfo.fields.osInfo")}
           </Typography>
           <Typography variant="body2" fontWeight="medium">
             {systemState.osInfo}
@@ -262,19 +284,16 @@ export const SystemInfoCard = () => {
           alignItems="center"
         >
           <Typography variant="body2" color="text.secondary">
-            {t("Auto Launch")}
+            {t("home.components.systemInfo.fields.autoLaunch")}
           </Typography>
           <Stack direction="row" spacing={1} alignItems="center">
-            {isAdminMode && (
-              <Tooltip
-                title={t("Administrator mode may not support auto launch")}
-              >
-                <WarningOutlined sx={{ color: "warning.main", fontSize: 20 }} />
-              </Tooltip>
-            )}
             <Chip
               size="small"
-              label={autoLaunchEnabled ? t("Enabled") : t("Disabled")}
+              label={
+                autoLaunchEnabled
+                  ? t("shared.statuses.enabled")
+                  : t("shared.statuses.disabled")
+              }
               color={autoLaunchEnabled ? "success" : "default"}
               variant={autoLaunchEnabled ? "filled" : "outlined"}
               onClick={toggleAutoLaunch}
@@ -289,7 +308,7 @@ export const SystemInfoCard = () => {
           alignItems="center"
         >
           <Typography variant="body2" color="text.secondary">
-            {t("Running Mode")}
+            {t("home.components.systemInfo.fields.runningMode")}
           </Typography>
           <Typography
             variant="body2"
@@ -304,7 +323,7 @@ export const SystemInfoCard = () => {
         <Divider />
         <Stack direction="row" justifyContent="space-between">
           <Typography variant="body2" color="text.secondary">
-            {t("Last Check Update")}
+            {t("home.components.systemInfo.fields.lastCheckUpdate")}
           </Typography>
           <Typography
             variant="body2"
@@ -322,7 +341,7 @@ export const SystemInfoCard = () => {
         <Divider />
         <Stack direction="row" justifyContent="space-between">
           <Typography variant="body2" color="text.secondary">
-            {t("Verge Version")}
+            {t("home.components.systemInfo.fields.vergeVersion")}
           </Typography>
           <Typography variant="body2" fontWeight="medium">
             v{appVersion}

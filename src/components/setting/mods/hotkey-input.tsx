@@ -1,12 +1,13 @@
-import { useRef, useState } from "react";
-import { alpha, Box, IconButton, styled } from "@mui/material";
 import { DeleteRounded } from "@mui/icons-material";
-import { parseHotkey } from "@/utils/parse-hotkey";
+import { alpha, Box, IconButton, styled } from "@mui/material";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+
+import { parseHotkey } from "@/utils/parse-hotkey";
 
 const KeyWrapper = styled("div")(({ theme }) => ({
   position: "relative",
-  width: 165,
+  width: 230,
   minHeight: 36,
 
   "> input": {
@@ -38,6 +39,7 @@ const KeyWrapper = styled("div")(({ theme }) => ({
     },
   },
   ".item": {
+    fontSize: "14px",
     color: theme.palette.text.primary,
     border: "1px solid",
     borderColor: alpha(theme.palette.text.secondary, 0.2),
@@ -75,11 +77,10 @@ export const HotkeyInput = (props: Props) => {
             }
           }}
           onKeyDown={(e) => {
-            const evt = e.nativeEvent;
             e.preventDefault();
             e.stopPropagation();
 
-            const key = parseHotkey(evt.key);
+            const key = parseHotkey(e);
             if (key === "UNIDENTIFIED") return;
 
             changeRef.current = [...new Set([...changeRef.current, key])];
@@ -89,13 +90,11 @@ export const HotkeyInput = (props: Props) => {
 
         <div className="list">
           {keys.map((key, index) => (
-            <Box display="flex">
+            <Box display="flex" key={key}>
               <span className="delimiter" hidden={index === 0}>
                 +
               </span>
-              <div key={key} className="item">
-                {key}
-              </div>
+              <div className="item">{key}</div>
             </Box>
           ))}
         </div>
@@ -103,7 +102,7 @@ export const HotkeyInput = (props: Props) => {
 
       <IconButton
         size="small"
-        title={t("Delete")}
+        title={t("shared.actions.delete")}
         color="inherit"
         onClick={() => {
           onChange([]);

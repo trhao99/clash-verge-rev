@@ -1,56 +1,23 @@
-import React, { createContext, useContext, useEffect, useMemo } from "react";
-import { useVerge } from "@/hooks/use-verge";
-import useSWR from "swr";
-import useSWRSubscription from "swr/subscription";
-import {
-  getProxies,
-  getRules,
-  getClashConfig,
-  getProxyProviders,
-  getRuleProviders,
-} from "@/services/api";
-import {
-  getSystemProxy,
-  getRunningMode,
-  getAppUptime,
-  forceRefreshProxies,
-} from "@/services/cmds";
-import { useClashInfo } from "@/hooks/use-clash";
-import { createAuthSockette } from "@/utils/websocket";
-import { useVisibility } from "@/hooks/use-visibility";
 import { listen } from "@tauri-apps/api/event";
+import React, { useCallback, useEffect, useMemo } from "react";
+import useSWR from "swr";
+import {
+  getBaseConfig,
+  getRuleProviders,
+  getRules,
+} from "tauri-plugin-mihomo-api";
 
-// 定义AppDataContext类型 - 使用宽松类型
-interface AppDataContextType {
-  proxies: any;
-  clashConfig: any;
-  rules: any[];
-  sysproxy: any;
-  runningMode?: string;
-  uptime: number;
-  proxyProviders: any;
-  ruleProviders: any;
-  connections: {
-    data: any[];
-    count: number;
-    uploadTotal: number;
-    downloadTotal: number;
-  };
-  traffic: { up: number; down: number };
-  memory: { inuse: number };
-  systemProxyAddress: string;
+import { useVerge } from "@/hooks/use-verge";
+import {
+  calcuProxies,
+  calcuProxyProviders,
+  getAppUptime,
+  getRunningMode,
+  getSystemProxy,
+} from "@/services/cmds";
+import { SWR_DEFAULTS, SWR_MIHOMO } from "@/services/config";
 
-  refreshProxy: () => Promise<any>;
-  refreshClashConfig: () => Promise<any>;
-  refreshRules: () => Promise<any>;
-  refreshSysproxy: () => Promise<any>;
-  refreshProxyProviders: () => Promise<any>;
-  refreshRuleProviders: () => Promise<any>;
-  refreshAll: () => Promise<any>;
-}
-
-// 创建上下文
-const AppDataContext = createContext<AppDataContextType | null>(null);
+import { AppDataContext, AppDataContextType } from "./app-data-context";
 
 // 全局数据提供者组件
 export const AppDataProvider = ({
@@ -58,436 +25,225 @@ export const AppDataProvider = ({
 }: {
   children: React.ReactNode;
 }) => {
-  const pageVisible = useVisibility();
-  const { clashInfo } = useClashInfo();
   const { verge } = useVerge();
 
-  // 基础数据 - 中频率更新 (5秒)
   const { data: proxiesData, mutate: refreshProxy } = useSWR(
     "getProxies",
-    getProxies,
-    {
-      refreshInterval: 5000,
-      revalidateOnFocus: true,
-      suspense: false,
-      errorRetryCount: 3,
-    },
+    calcuProxies,
+    SWR_MIHOMO,
   );
-
-  // 监听profile和clash配置变更事件
-  useEffect(() => {
-    let profileUnlisten: Promise<() => void> | undefined;
-    let lastProfileId: string | null = null;
-    let lastUpdateTime = 0;
-    const refreshThrottle = 500;
-
-    const setupEventListeners = async () => {
-      try {
-        // 监听profile切换事件
-        profileUnlisten = listen<string>("profile-changed", (event) => {
-          const newProfileId = event.payload;
-          const now = Date.now();
-
-          console.log(`[AppDataProvider] Profile切换事件: ${newProfileId}`);
-
-          if (
-            lastProfileId === newProfileId &&
-            now - lastUpdateTime < refreshThrottle
-          ) {
-            console.log("[AppDataProvider] 重复事件被防抖，跳过");
-            return;
-          }
-
-          lastProfileId = newProfileId;
-          lastUpdateTime = now;
-
-          setTimeout(() => {
-            // 先执行 forceRefreshProxies，完成后稍延迟再刷新前端数据，避免页面一直 loading
-            forceRefreshProxies()
-              .catch((e) =>
-                console.warn("[AppDataProvider] forceRefreshProxies 失败:", e),
-              )
-              .finally(() => {
-                setTimeout(() => {
-                  refreshProxy().catch((e) =>
-                    console.warn("[AppDataProvider] 普通刷新也失败:", e),
-                  );
-                }, 200); // 200ms 延迟，保证后端缓存已清理
-              });
-          }, 0);
-        });
-
-        // 监听Clash配置刷新事件(enhance操作等)
-        const handleRefreshClash = () => {
-          const now = Date.now();
-          console.log("[AppDataProvider] Clash配置刷新事件");
-
-          if (now - lastUpdateTime > refreshThrottle) {
-            lastUpdateTime = now;
-
-            setTimeout(async () => {
-              try {
-                console.log("[AppDataProvider] Clash刷新 - 强制刷新代理缓存");
-
-                // 添加超时保护
-                const refreshPromise = Promise.race([
-                  forceRefreshProxies(),
-                  new Promise((_, reject) =>
-                    setTimeout(
-                      () => reject(new Error("forceRefreshProxies timeout")),
-                      8000,
-                    ),
-                  ),
-                ]);
-
-                await refreshPromise;
-                await refreshProxy();
-              } catch (error) {
-                console.error(
-                  "[AppDataProvider] Clash刷新时强制刷新代理缓存失败:",
-                  error,
-                );
-                refreshProxy().catch((e) =>
-                  console.warn("[AppDataProvider] Clash刷新普通刷新也失败:", e),
-                );
-              }
-            }, 0);
-          }
-        };
-
-        window.addEventListener(
-          "verge://refresh-clash-config",
-          handleRefreshClash,
-        );
-
-        return () => {
-          window.removeEventListener(
-            "verge://refresh-clash-config",
-            handleRefreshClash,
-          );
-        };
-      } catch (error) {
-        console.error("[AppDataProvider] 事件监听器设置失败:", error);
-        return () => {};
-      }
-    };
-
-    const cleanupPromise = setupEventListeners();
-
-    return () => {
-      profileUnlisten?.then((unlisten) => unlisten()).catch(console.error);
-      cleanupPromise.then((cleanup) => cleanup());
-    };
-  }, [refreshProxy]);
 
   const { data: clashConfig, mutate: refreshClashConfig } = useSWR(
     "getClashConfig",
-    getClashConfig,
-    {
-      refreshInterval: 5000,
-      revalidateOnFocus: false,
-      suspense: false,
-      errorRetryCount: 3,
-    },
+    getBaseConfig,
+    SWR_MIHOMO,
   );
 
-  // 提供者数据
   const { data: proxyProviders, mutate: refreshProxyProviders } = useSWR(
     "getProxyProviders",
-    getProxyProviders,
-    {
-      revalidateOnFocus: false,
-      revalidateOnReconnect: false,
-      dedupingInterval: 3000,
-      suspense: false,
-      errorRetryCount: 3,
-    },
+    calcuProxyProviders,
+    SWR_MIHOMO,
   );
 
   const { data: ruleProviders, mutate: refreshRuleProviders } = useSWR(
     "getRuleProviders",
     getRuleProviders,
-    {
-      revalidateOnFocus: false,
-      suspense: false,
-      errorRetryCount: 3,
-    },
+    SWR_MIHOMO,
   );
 
-  // 低频率更新数据
   const { data: rulesData, mutate: refreshRules } = useSWR(
     "getRules",
     getRules,
-    {
-      revalidateOnFocus: false,
-      suspense: false,
-      errorRetryCount: 3,
-    },
+    SWR_MIHOMO,
   );
+
+  useEffect(() => {
+    let lastProfileId: string | null = null;
+    let lastUpdateTime = 0;
+    const refreshThrottle = 800;
+
+    let isUnmounted = false;
+    const scheduledTimeouts = new Set<number>();
+    const cleanupFns: Array<() => void> = [];
+
+    const registerCleanup = (fn: () => void) => {
+      if (isUnmounted) {
+        try {
+          fn();
+        } catch (error) {
+          console.error("[DataProvider] Immediate cleanup failed:", error);
+        }
+      } else {
+        cleanupFns.push(fn);
+      }
+    };
+
+    const addWindowListener = (eventName: string, handler: EventListener) => {
+      // eslint-disable-next-line @eslint-react/web-api/no-leaked-event-listener
+      window.addEventListener(eventName, handler);
+      return () => window.removeEventListener(eventName, handler);
+    };
+
+    const scheduleTimeout = (
+      callback: () => void | Promise<void>,
+      delay: number,
+    ) => {
+      if (isUnmounted) return -1;
+
+      const timeoutId = window.setTimeout(() => {
+        scheduledTimeouts.delete(timeoutId);
+        if (!isUnmounted) {
+          void callback();
+        }
+      }, delay);
+
+      scheduledTimeouts.add(timeoutId);
+      return timeoutId;
+    };
+
+    const clearAllTimeouts = () => {
+      scheduledTimeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+      scheduledTimeouts.clear();
+    };
+
+    const handleProfileChanged = (event: { payload: string }) => {
+      const newProfileId = event.payload;
+      const now = Date.now();
+
+      if (
+        lastProfileId === newProfileId &&
+        now - lastUpdateTime < refreshThrottle
+      ) {
+        return;
+      }
+
+      lastProfileId = newProfileId;
+      lastUpdateTime = now;
+
+      scheduleTimeout(() => {
+        refreshRules().catch((error) =>
+          console.warn("[DataProvider] Rules refresh failed:", error),
+        );
+        refreshRuleProviders().catch((error) =>
+          console.warn("[DataProvider] Rule providers refresh failed:", error),
+        );
+      }, 200);
+    };
+
+    const handleRefreshClash = () => {
+      const now = Date.now();
+      if (now - lastUpdateTime <= refreshThrottle) return;
+
+      lastUpdateTime = now;
+      scheduleTimeout(async () => {
+        await Promise.all([
+          refreshProxy().catch((error) =>
+            console.error("[DataProvider] Proxy refresh failed:", error),
+          ),
+          refreshClashConfig().catch((error) =>
+            console.error("[DataProvider] Clash config refresh failed:", error),
+          ),
+        ]);
+      }, 200);
+    };
+
+    const handleRefreshProxy = () => {
+      const now = Date.now();
+      if (now - lastUpdateTime <= refreshThrottle) return;
+
+      lastUpdateTime = now;
+      scheduleTimeout(() => {
+        refreshProxy().catch((error) =>
+          console.warn("[DataProvider] Proxy refresh failed:", error),
+        );
+      }, 200);
+    };
+
+    const initializeListeners = async () => {
+      try {
+        const unlistenProfile = await listen<string>(
+          "profile-changed",
+          handleProfileChanged,
+        );
+        registerCleanup(unlistenProfile);
+      } catch (error) {
+        console.error("[AppDataProvider] 监听 Profile 事件失败:", error);
+      }
+
+      try {
+        const unlistenClash = await listen(
+          "verge://refresh-clash-config",
+          handleRefreshClash,
+        );
+        const unlistenProxy = await listen(
+          "verge://refresh-proxy-config",
+          handleRefreshProxy,
+        );
+
+        registerCleanup(() => {
+          unlistenClash();
+          unlistenProxy();
+        });
+      } catch (error) {
+        console.warn("[AppDataProvider] 设置 Tauri 事件监听器失败:", error);
+
+        const fallbackHandlers: Array<[string, EventListener]> = [
+          ["verge://refresh-clash-config", handleRefreshClash],
+          ["verge://refresh-proxy-config", handleRefreshProxy],
+        ];
+
+        fallbackHandlers.forEach(([eventName, handler]) => {
+          registerCleanup(addWindowListener(eventName, handler));
+        });
+      }
+    };
+
+    void initializeListeners();
+
+    return () => {
+      isUnmounted = true;
+      clearAllTimeouts();
+
+      const errors: Error[] = [];
+      cleanupFns.splice(0).forEach((fn) => {
+        try {
+          fn();
+        } catch (error) {
+          errors.push(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        }
+      });
+
+      if (errors.length > 0) {
+        console.error(
+          `[DataProvider] ${errors.length} errors during cleanup:`,
+          errors,
+        );
+      }
+    };
+  }, [refreshProxy, refreshClashConfig, refreshRules, refreshRuleProviders]);
 
   const { data: sysproxy, mutate: refreshSysproxy } = useSWR(
     "getSystemProxy",
     getSystemProxy,
-    {
-      revalidateOnFocus: true,
-      revalidateOnReconnect: true,
-      suspense: false,
-      errorRetryCount: 3,
-    },
+    SWR_DEFAULTS,
   );
 
-  const { data: runningMode } = useSWR("getRunningMode", getRunningMode, {
-    revalidateOnFocus: false,
-    suspense: false,
-    errorRetryCount: 3,
-  });
+  const { data: runningMode } = useSWR(
+    "getRunningMode",
+    getRunningMode,
+    SWR_DEFAULTS,
+  );
 
-  // 高频率更新数据 (2秒)
   const { data: uptimeData } = useSWR("appUptime", getAppUptime, {
-    refreshInterval: 2000,
-    revalidateOnFocus: false,
-    suspense: false,
+    ...SWR_DEFAULTS,
+    refreshInterval: 3000,
+    errorRetryCount: 1,
   });
-
-  // 连接数据 - 使用WebSocket实时更新
-  const {
-    data: connectionsData = {
-      connections: [],
-      uploadTotal: 0,
-      downloadTotal: 0,
-    },
-  } = useSWRSubscription(
-    clashInfo && pageVisible ? "connections" : null,
-    (_key, { next }) => {
-      if (!clashInfo || !pageVisible) return () => {};
-
-      const { server = "", secret = "" } = clashInfo;
-      if (!server) return () => {};
-
-      console.log(
-        `[Connections][${AppDataProvider.name}] 正在连接: ${server}/connections`,
-      );
-      const socket = createAuthSockette(`${server}/connections`, secret, {
-        timeout: 5000,
-        onmessage(event) {
-          try {
-            const data = JSON.parse(event.data);
-            // 处理连接数据，计算当前上传下载速度
-            next(
-              null,
-              (
-                prev: any = {
-                  connections: [],
-                  uploadTotal: 0,
-                  downloadTotal: 0,
-                },
-              ) => {
-                const oldConns = prev.connections || [];
-                const newConns = data.connections || [];
-
-                // 计算当前速度
-                const processedConns = newConns.map((conn: any) => {
-                  const oldConn = oldConns.find(
-                    (old: any) => old.id === conn.id,
-                  );
-                  if (oldConn) {
-                    return {
-                      ...conn,
-                      curUpload: conn.upload - oldConn.upload,
-                      curDownload: conn.download - oldConn.download,
-                    };
-                  }
-                  return { ...conn, curUpload: 0, curDownload: 0 };
-                });
-
-                return {
-                  ...data,
-                  connections: processedConns,
-                };
-              },
-            );
-          } catch (err) {
-            console.error(
-              `[Connections][${AppDataProvider.name}] 解析数据错误:`,
-              err,
-              event.data,
-            );
-          }
-        },
-        onopen: (event) => {
-          console.log(
-            `[Connections][${AppDataProvider.name}] WebSocket 连接已建立`,
-            event,
-          );
-        },
-        onerror(event) {
-          console.error(
-            `[Connections][${AppDataProvider.name}] WebSocket 连接错误或达到最大重试次数`,
-            event,
-          );
-          next(null, { connections: [], uploadTotal: 0, downloadTotal: 0 });
-        },
-        onclose: (event) => {
-          console.log(
-            `[Connections][${AppDataProvider.name}] WebSocket 连接关闭`,
-            event.code,
-            event.reason,
-          );
-          if (event.code !== 1000 && event.code !== 1001) {
-            console.warn(
-              `[Connections][${AppDataProvider.name}] 连接非正常关闭，重置数据`,
-            );
-            next(null, { connections: [], uploadTotal: 0, downloadTotal: 0 });
-          }
-        },
-      });
-
-      return () => {
-        console.log(`[Connections][${AppDataProvider.name}] 清理WebSocket连接`);
-        socket.close();
-      };
-    },
-  );
-
-  // 流量和内存数据 - 通过WebSocket获取实时流量数据
-  const { data: trafficData = { up: 0, down: 0 } } = useSWRSubscription(
-    clashInfo && pageVisible ? "traffic" : null,
-    (_key, { next }) => {
-      if (!clashInfo || !pageVisible) return () => {};
-
-      const { server = "", secret = "" } = clashInfo;
-      if (!server) return () => {};
-
-      console.log(
-        `[Traffic][${AppDataProvider.name}] 正在连接: ${server}/traffic`,
-      );
-      const socket = createAuthSockette(`${server}/traffic`, secret, {
-        onmessage(event) {
-          try {
-            const data = JSON.parse(event.data);
-            if (
-              data &&
-              typeof data.up === "number" &&
-              typeof data.down === "number"
-            ) {
-              next(null, data);
-            } else {
-              console.warn(
-                `[Traffic][${AppDataProvider.name}] 收到无效数据:`,
-                data,
-              );
-            }
-          } catch (err) {
-            console.error(
-              `[Traffic][${AppDataProvider.name}] 解析数据错误:`,
-              err,
-              event.data,
-            );
-          }
-        },
-        onopen: (event) => {
-          console.log(
-            `[Traffic][${AppDataProvider.name}] WebSocket 连接已建立`,
-            event,
-          );
-        },
-        onerror(event) {
-          console.error(
-            `[Traffic][${AppDataProvider.name}] WebSocket 连接错误或达到最大重试次数`,
-            event,
-          );
-          next(null, { up: 0, down: 0 });
-        },
-        onclose: (event) => {
-          console.log(
-            `[Traffic][${AppDataProvider.name}] WebSocket 连接关闭`,
-            event.code,
-            event.reason,
-          );
-          if (event.code !== 1000 && event.code !== 1001) {
-            console.warn(
-              `[Traffic][${AppDataProvider.name}] 连接非正常关闭，重置数据`,
-            );
-            next(null, { up: 0, down: 0 });
-          }
-        },
-      });
-
-      return () => {
-        console.log(`[Traffic][${AppDataProvider.name}] 清理WebSocket连接`);
-        socket.close();
-      };
-    },
-  );
-
-  const { data: memoryData = { inuse: 0 } } = useSWRSubscription(
-    clashInfo && pageVisible ? "memory" : null,
-    (_key, { next }) => {
-      if (!clashInfo || !pageVisible) return () => {};
-
-      const { server = "", secret = "" } = clashInfo;
-      if (!server) return () => {};
-
-      console.log(
-        `[Memory][${AppDataProvider.name}] 正在连接: ${server}/memory`,
-      );
-      const socket = createAuthSockette(`${server}/memory`, secret, {
-        onmessage(event) {
-          try {
-            const data = JSON.parse(event.data);
-            if (data && typeof data.inuse === "number") {
-              next(null, data);
-            } else {
-              console.warn(
-                `[Memory][${AppDataProvider.name}] 收到无效数据:`,
-                data,
-              );
-            }
-          } catch (err) {
-            console.error(
-              `[Memory][${AppDataProvider.name}] 解析数据错误:`,
-              err,
-              event.data,
-            );
-          }
-        },
-        onopen: (event) => {
-          console.log(
-            `[Memory][${AppDataProvider.name}] WebSocket 连接已建立`,
-            event,
-          );
-        },
-        onerror(event) {
-          console.error(
-            `[Memory][${AppDataProvider.name}] WebSocket 连接错误或达到最大重试次数`,
-            event,
-          );
-          next(null, { inuse: 0 });
-        },
-        onclose: (event) => {
-          console.log(
-            `[Memory][${AppDataProvider.name}] WebSocket 连接关闭`,
-            event.code,
-            event.reason,
-          );
-          if (event.code !== 1000 && event.code !== 1001) {
-            console.warn(
-              `[Memory][${AppDataProvider.name}] 连接非正常关闭，重置数据`,
-            );
-            next(null, { inuse: 0 });
-          }
-        },
-      });
-
-      return () => {
-        console.log(`[Memory][${AppDataProvider.name}] 清理WebSocket连接`);
-        socket.close();
-      };
-    },
-  );
 
   // 提供统一的刷新方法
-  const refreshAll = async () => {
+  const refreshAll = useCallback(async () => {
     await Promise.all([
       refreshProxy(),
       refreshClashConfig(),
@@ -496,7 +252,14 @@ export const AppDataProvider = ({
       refreshProxyProviders(),
       refreshRuleProviders(),
     ]);
-  };
+  }, [
+    refreshProxy,
+    refreshClashConfig,
+    refreshRules,
+    refreshSysproxy,
+    refreshProxyProviders,
+    refreshRuleProviders,
+  ]);
 
   // 聚合所有数据
   const value = useMemo(() => {
@@ -510,7 +273,7 @@ export const AppDataProvider = ({
         // PAC模式：显示我们期望设置的代理地址
         const proxyHost = verge.proxy_host || "127.0.0.1";
         const proxyPort =
-          verge.verge_mixed_port || clashConfig["mixed-port"] || 7897;
+          verge.verge_mixed_port || clashConfig.mixedPort || 7897;
         return `${proxyHost}:${proxyPort}`;
       } else {
         // HTTP代理模式：优先使用系统地址，但如果格式不正确则使用期望地址
@@ -525,7 +288,7 @@ export const AppDataProvider = ({
           // 系统地址无效，返回期望的代理地址
           const proxyHost = verge.proxy_host || "127.0.0.1";
           const proxyPort =
-            verge.verge_mixed_port || clashConfig["mixed-port"] || 7897;
+            verge.verge_mixed_port || clashConfig.mixedPort || 7897;
           return `${proxyHost}:${proxyPort}`;
         }
       }
@@ -535,26 +298,14 @@ export const AppDataProvider = ({
       // 数据
       proxies: proxiesData,
       clashConfig,
-      rules: rulesData || [],
+      rules: rulesData?.rules ?? [],
       sysproxy,
       runningMode,
       uptime: uptimeData || 0,
 
       // 提供者数据
       proxyProviders: proxyProviders || {},
-      ruleProviders: ruleProviders || {},
-
-      // 连接数据
-      connections: {
-        data: connectionsData.connections || [],
-        count: connectionsData.connections?.length || 0,
-        uploadTotal: connectionsData.uploadTotal || 0,
-        downloadTotal: connectionsData.downloadTotal || 0,
-      },
-
-      // 实时流量数据
-      traffic: trafficData,
-      memory: memoryData,
+      ruleProviders: ruleProviders?.providers || {},
 
       systemProxyAddress: calculateSystemProxyAddress(),
 
@@ -566,7 +317,7 @@ export const AppDataProvider = ({
       refreshProxyProviders,
       refreshRuleProviders,
       refreshAll,
-    };
+    } as AppDataContextType;
   }, [
     proxiesData,
     clashConfig,
@@ -574,9 +325,6 @@ export const AppDataProvider = ({
     sysproxy,
     runningMode,
     uptimeData,
-    connectionsData,
-    trafficData,
-    memoryData,
     proxyProviders,
     ruleProviders,
     verge,
@@ -586,20 +334,8 @@ export const AppDataProvider = ({
     refreshSysproxy,
     refreshProxyProviders,
     refreshRuleProviders,
+    refreshAll,
   ]);
 
-  return (
-    <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>
-  );
-};
-
-// 自定义Hook访问全局数据
-export const useAppData = () => {
-  const context = useContext(AppDataContext);
-
-  if (!context) {
-    throw new Error("useAppData必须在AppDataProvider内使用");
-  }
-
-  return context;
+  return <AppDataContext value={value}>{children}</AppDataContext>;
 };

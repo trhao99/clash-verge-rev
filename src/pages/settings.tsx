@@ -1,21 +1,22 @@
+import { GitHub, HelpOutlineRounded, Telegram } from "@mui/icons-material";
 import { Box, ButtonGroup, IconButton, Grid } from "@mui/material";
 import { useLockFn } from "ahooks";
 import { useTranslation } from "react-i18next";
+
 import { BasePage } from "@/components/base";
-import { GitHub, HelpOutlineRounded, Telegram } from "@mui/icons-material";
-import { openWebUrl } from "@/services/cmds";
-import SettingVergeBasic from "@/components/setting/setting-verge-basic";
-import SettingVergeAdvanced from "@/components/setting/setting-verge-advanced";
 import SettingClash from "@/components/setting/setting-clash";
 import SettingSystem from "@/components/setting/setting-system";
+import SettingVergeAdvanced from "@/components/setting/setting-verge-advanced";
+import SettingVergeBasic from "@/components/setting/setting-verge-basic";
+import { openWebUrl } from "@/services/cmds";
+import { showNotice } from "@/services/notice-service";
 import { useThemeMode } from "@/services/states";
-import { showNotice } from "@/services/noticeService";
 
 const SettingPage = () => {
   const { t } = useTranslation();
 
   const onError = (err: any) => {
-    showNotice("error", err?.message || err.toString());
+    showNotice.error(err);
   };
 
   const toGithubRepo = useLockFn(() => {
@@ -35,13 +36,13 @@ const SettingPage = () => {
 
   return (
     <BasePage
-      title={t("Settings")}
+      title={t("settings.page.title")}
       header={
         <ButtonGroup variant="contained" aria-label="Basic button group">
           <IconButton
             size="medium"
             color="inherit"
-            title={t("Manual")}
+            title={t("settings.page.actions.manual")}
             onClick={toGithubDoc}
           >
             <HelpOutlineRounded fontSize="inherit" />
@@ -49,7 +50,7 @@ const SettingPage = () => {
           <IconButton
             size="medium"
             color="inherit"
-            title={t("TG Channel")}
+            title={t("settings.page.actions.telegram")}
             onClick={toTelegramChannel}
           >
             <Telegram fontSize="inherit" />
@@ -58,7 +59,7 @@ const SettingPage = () => {
           <IconButton
             size="medium"
             color="inherit"
-            title={t("Github Repo")}
+            title={t("settings.page.actions.github")}
             onClick={toGithubRepo}
           >
             <GitHub fontSize="inherit" />

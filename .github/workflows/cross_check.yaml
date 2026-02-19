@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  HUSKY: 0
+
 jobs:
   cargo-check:
     # Treat all Rust compiler warnings as errors
@@ -27,7 +30,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
@@ -38,9 +41,9 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24.13.1"
 
       - uses: pnpm/action-setup@v4
         name: Install pnpm

@@ -1,18 +1,21 @@
-import { useEffect, useState } from "react";
-import { useLockFn } from "ahooks";
-import { useTranslation } from "react-i18next";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Box, Divider, MenuItem, Menu, styled, alpha } from "@mui/material";
-import { BaseLoading } from "@/components/base";
 import { LanguageRounded } from "@mui/icons-material";
-import { showNotice } from "@/services/noticeService";
-import { TestBox } from "./test-box";
-import delayManager from "@/services/delay";
-import { cmdTestDelay, downloadIconCache } from "@/services/cmds";
+import { Box, Divider, MenuItem, Menu, styled, alpha } from "@mui/material";
 import { UnlistenFn } from "@tauri-apps/api/event";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { useLockFn } from "ahooks";
+import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+
+import { BaseLoading } from "@/components/base";
+import { useIconCache } from "@/hooks/use-icon-cache";
 import { useListen } from "@/hooks/use-listen";
+import { cmdTestDelay } from "@/services/cmds";
+import delayManager from "@/services/delay";
+import { showNotice } from "@/services/notice-service";
+import { debugLog } from "@/utils/debug";
+
+import { TestBox } from "./test-box";
 
 interface Props {
   id: string;
@@ -21,8 +24,12 @@ interface Props {
   onDelete: (uid: string) => void;
 }
 
-export const TestItem = (props: Props) => {
-  const { itemData, onEdit, onDelete: onDeleteItem } = props;
+export const TestItem = ({
+  id,
+  itemData,
+  onEdit,
+  onDelete: removeTest,
+}: Props) => {
   const {
     attributes,
     listeners,
@@ -31,7 +38,7 @@ export const TestItem = (props: Props) => {
     transition,
     isDragging,
   } = useSortable({
-    id: props.id,
+    id,
   });
 
   const { t } = useTranslation();
@@ -39,30 +46,14 @@ export const TestItem = (props: Props) => {
   const [position, setPosition] = useState({ left: 0, top: 0 });
   const [delay, setDelay] = useState(-1);
   const { uid, name, icon, url } = itemData;
-  const [iconCachePath, setIconCachePath] = useState("");
+  const iconCachePath = useIconCache({ icon, cacheKey: uid });
   const { addListener } = useListen();
 
-  const onDelay = async () => {
+  const onDelay = useCallback(async () => {
     setDelay(-2);
     const result = await cmdTestDelay(url);
     setDelay(result);
-  };
-
-  useEffect(() => {
-    initIconCachePath();
-  }, [icon]);
-
-  async function initIconCachePath() {
-    if (icon && icon.trim().startsWith("http")) {
-      const fileName = uid + "-" + getFileName(icon);
-      const iconPath = await downloadIconCache(icon, fileName);
-      setIconCachePath(convertFileSrc(iconPath));
-    }
-  }
-
-  function getFileName(url: string) {
-    return url.substring(url.lastIndexOf("/") + 1);
-  }
+  }, [url]);
 
   const onEditTest = () => {
     setAnchorEl(null);
@@ -72,9 +63,9 @@ export const TestItem = (props: Props) => {
   const onDelete = useLockFn(async () => {
     setAnchorEl(null);
     try {
-      onDeleteItem(uid);
+      removeTest(uid);
     } catch (err: any) {
-      showNotice("error", err.message || err.toString());
+      showNotice.error(err);
     }
   });
 
@@ -99,13 +90,13 @@ export const TestItem = (props: Props) => {
 
     return () => {
       if (unlistenFn) {
-        console.log(
-          `TestItem for ${props.id} unmounting or url changed, cleaning up test-all listener.`,
+        debugLog(
+          `TestItem for ${id} unmounting or url changed, cleaning up test-all listener.`,
         );
         unlistenFn();
       }
     };
-  }, [url, addListener, onDelay, props.id]);
+  }, [url, addListener, onDelay, id]);
 
   return (
     <Box
@@ -184,7 +175,7 @@ export const TestItem = (props: Props) => {
                 ":hover": { bgcolor: alpha(palette.primary.main, 0.15) },
               })}
             >
-              {t("Test")}
+              {t("tests.components.item.actions.test")}
             </Widget>
           )}
 

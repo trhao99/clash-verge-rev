@@ -1,4 +1,4 @@
-import React, { ReactNode, useState } from "react";
+import { ChevronRightRounded } from "@mui/icons-material";
 import {
   Box,
   List,
@@ -7,8 +7,9 @@ import {
   ListItemText,
   ListSubheader,
 } from "@mui/material";
-import { ChevronRightRounded } from "@mui/icons-material";
 import CircularProgress from "@mui/material/CircularProgress";
+import React, { ReactNode, useState } from "react";
+
 import isAsyncFunction from "@/utils/is-async-function";
 
 interface ItemProps {
@@ -19,8 +20,13 @@ interface ItemProps {
   onClick?: () => void | Promise<any>;
 }
 
-export const SettingItem: React.FC<ItemProps> = (props) => {
-  const { label, extra, children, secondary, onClick } = props;
+export const SettingItem: React.FC<ItemProps> = ({
+  label,
+  extra,
+  children,
+  secondary,
+  onClick,
+}) => {
   const clickable = !!onClick;
 
   const primary = (
@@ -64,7 +70,7 @@ export const SettingItem: React.FC<ItemProps> = (props) => {
 export const SettingList: React.FC<{
   title: string;
   children: ReactNode;
-}> = (props) => (
+}> = ({ title, children }) => (
   <List>
     <ListSubheader
       sx={[
@@ -77,9 +83,9 @@ export const SettingList: React.FC<{
       ]}
       disableSticky
     >
-      {props.title}
+      {title}
     </ListSubheader>
 
-    {props.children}
+    {children}
   </List>
 );

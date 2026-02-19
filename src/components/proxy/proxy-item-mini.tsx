@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
-import { useLockFn } from "ahooks";
 import { CheckCircleOutlineRounded } from "@mui/icons-material";
 import { alpha, Box, ListItemButton, styled, Typography } from "@mui/material";
-import { BaseLoading } from "@/components/base";
-import delayManager from "@/services/delay";
-import { useVerge } from "@/hooks/use-verge";
+import { useLockFn } from "ahooks";
+import { useCallback, useEffect, useReducer } from "react";
 import { useTranslation } from "react-i18next";
+
+import { BaseLoading } from "@/components/base";
+import { useVerge } from "@/hooks/use-verge";
+import delayManager, { DelayUpdate } from "@/services/delay";
 
 interface Props {
   group: IProxyGroupItem;
@@ -23,30 +24,65 @@ export const ProxyItemMini = (props: Props) => {
 
   const presetList = ["DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE"];
   const isPreset = presetList.includes(proxy.name);
-  // -1/<=0 为 不显示
-  // -2 为 loading
-  const [delay, setDelay] = useState(-1);
+  // -1/<=0 为不显示，-2 为 loading
+  const [delayState, setDelayState] = useReducer(
+    (_: DelayUpdate, next: DelayUpdate) => next,
+    { delay: -1, updatedAt: 0 },
+  );
   const { verge } = useVerge();
   const timeout = verge?.default_latency_timeout || 10000;
 
   useEffect(() => {
     if (isPreset) return;
-    delayManager.setListener(proxy.name, group.name, setDelay);
+    delayManager.setListener(proxy.name, group.name, setDelayState);
 
     return () => {
       delayManager.removeListener(proxy.name, group.name);
     };
-  }, [proxy.name, group.name]);
+  }, [isPreset, proxy.name, group.name]);
+
+  const updateDelay = useCallback(() => {
+    if (!proxy) return;
+    const cachedUpdate = delayManager.getDelayUpdate(proxy.name, group.name);
+    if (cachedUpdate) {
+      setDelayState({ ...cachedUpdate });
+      return;
+    }
+
+    const fallbackDelay = delayManager.getDelayFix(proxy, group.name);
+    if (fallbackDelay === -1) {
+      setDelayState({ delay: -1, updatedAt: 0 });
+      return;
+    }
+
+    let updatedAt = 0;
+    const history = proxy.history;
+    if (history && history.length > 0) {
+      const lastRecord = history[history.length - 1];
+      const parsed = Date.parse(lastRecord.time);
+      if (!Number.isNaN(parsed)) {
+        updatedAt = parsed;
+      }
+    }
+
+    setDelayState({
+      delay: fallbackDelay,
+      updatedAt,
+    });
+  }, [proxy, group.name]);
 
   useEffect(() => {
-    if (!proxy) return;
-    setDelay(delayManager.getDelayFix(proxy, group.name));
-  }, [proxy]);
+    updateDelay();
+  }, [updateDelay]);
 
   const onDelay = useLockFn(async () => {
-    setDelay(-2);
-    setDelay(await delayManager.checkDelay(proxy.name, group.name, timeout));
+    setDelayState({ delay: -2, updatedAt: Date.now() });
+    setDelayState(
+      await delayManager.checkDelay(proxy.name, group.name, timeout),
+    );
   });
+
+  const delayValue = delayState.delay;
 
   return (
     <ListItemButton
@@ -64,7 +100,7 @@ export const ProxyItemMini = (props: Props) => {
         },
         ({ palette: { mode, primary } }) => {
           const bgcolor = mode === "light" ? "#ffffff" : "#24252f";
-          const showDelay = delay > 0;
+          const showDelay = delayValue > 0;
           const selectColor = mode === "light" ? primary.main : primary.light;
 
           return {
@@ -176,13 +212,13 @@ export const ProxyItemMini = (props: Props) => {
       <Box
         sx={{ ml: 0.5, color: "primary.main", display: isPreset ? "none" : "" }}
       >
-        {delay === -2 && (
+        {delayValue === -2 && (
           <Widget>
             <BaseLoading />
           </Widget>
         )}
-        {!proxy.provider && delay !== -2 && (
-          // provider的节点不支持检测
+        {!proxy.provider && delayValue !== -2 && (
+          // provider 的节点不支持检测
           <Widget
             className="the-check"
             onClick={(e) => {
@@ -191,7 +227,7 @@ export const ProxyItemMini = (props: Props) => {
               onDelay();
             }}
             sx={({ palette }) => ({
-              display: "none", // hover才显示
+              display: "none", // hover 时显示
               ":hover": { bgcolor: alpha(palette.primary.main, 0.15) },
             })}
           >
@@ -199,7 +235,7 @@ export const ProxyItemMini = (props: Props) => {
           </Widget>
         )}
 
-        {delay > 0 && (
+        {delayValue >= 0 && (
           // 显示延迟
           <Widget
             className="the-delay"
@@ -209,30 +245,35 @@ export const ProxyItemMini = (props: Props) => {
               e.stopPropagation();
               onDelay();
             }}
-            color={delayManager.formatDelayColor(delay, timeout)}
+            color={delayManager.formatDelayColor(delayValue, timeout)}
             sx={({ palette }) =>
               !proxy.provider
                 ? { ":hover": { bgcolor: alpha(palette.primary.main, 0.15) } }
                 : {}
             }
           >
-            {delayManager.formatDelay(delay, timeout)}
+            {delayManager.formatDelay(delayValue, timeout)}
           </Widget>
         )}
-        {delay !== -2 && delay <= 0 && selected && (
-          // 展示已选择的icon
-          <CheckCircleOutlineRounded
-            className="the-icon"
-            sx={{ fontSize: 16, mr: 0.5, display: "block" }}
-          />
-        )}
+        {proxy.type !== "Direct" &&
+          delayValue !== -2 &&
+          delayValue < 0 &&
+          selected && (
+            // 展示已选择的 icon
+            <CheckCircleOutlineRounded
+              className="the-icon"
+              sx={{ fontSize: 16, mr: 0.5, display: "block" }}
+            />
+          )}
       </Box>
       {group.fixed && group.fixed === proxy.name && (
-        // 展示fixed状态
+        // 展示 fixed 状态
         <span
           className={proxy.name === group.now ? "the-pin" : "the-unpin"}
           title={
-            group.type === "URLTest" ? t("Delay check to cancel fixed") : ""
+            group.type === "URLTest"
+              ? t("proxies.page.labels.delayCheckReset")
+              : ""
           }
         >
           📌
@@ -251,7 +292,7 @@ const Widget = styled(Box)(({ theme: { typography } }) => ({
 
 const TypeBox = styled(Box, {
   shouldForwardProp: (prop) => prop !== "component",
-})<{ component?: React.ElementType }>(({ theme: { palette, typography } }) => ({
+})<{ component?: React.ElementType }>(({ theme: { typography } }) => ({
   display: "inline-block",
   border: "1px solid #ccc",
   borderColor: "text.secondary",

@@ -1,10 +1,12 @@
-import { useTranslation } from "react-i18next";
-import { Typography, Stack, Divider } from "@mui/material";
 import { DeveloperBoardOutlined } from "@mui/icons-material";
-import { useClash } from "@/hooks/use-clash";
-import { EnhancedCard } from "./enhanced-card";
+import { Divider, Stack, Typography } from "@mui/material";
 import { useMemo } from "react";
-import { useAppData } from "@/providers/app-data-provider";
+import { useTranslation } from "react-i18next";
+
+import { useClash } from "@/hooks/use-clash";
+import { useAppData } from "@/providers/app-data-context";
+
+import { EnhancedCard } from "./enhanced-card";
 
 // 将毫秒转换为时:分:秒格式的函数
 const formatUptime = (uptimeMs: number) => {
@@ -30,7 +32,7 @@ export const ClashInfoCard = () => {
       <Stack spacing={1.5}>
         <Stack direction="row" justifyContent="space-between">
           <Typography variant="body2" color="text.secondary">
-            {t("Core Version")}
+            {t("home.components.clashInfo.fields.coreVersion")}
           </Typography>
           <Typography variant="body2" fontWeight="medium">
             {clashVersion || "-"}
@@ -39,7 +41,7 @@ export const ClashInfoCard = () => {
         <Divider />
         <Stack direction="row" justifyContent="space-between">
           <Typography variant="body2" color="text.secondary">
-            {t("System Proxy Address")}
+            {t("home.components.clashInfo.fields.systemProxyAddress")}
           </Typography>
           <Typography variant="body2" fontWeight="medium">
             {systemProxyAddress}
@@ -48,16 +50,16 @@ export const ClashInfoCard = () => {
         <Divider />
         <Stack direction="row" justifyContent="space-between">
           <Typography variant="body2" color="text.secondary">
-            {t("Mixed Port")}
+            {t("home.components.clashInfo.fields.mixedPort")}
           </Typography>
           <Typography variant="body2" fontWeight="medium">
-            {clashConfig["mixed-port"] || "-"}
+            {clashConfig.mixedPort || "-"}
           </Typography>
         </Stack>
         <Divider />
         <Stack direction="row" justifyContent="space-between">
           <Typography variant="body2" color="text.secondary">
-            {t("Uptime")}
+            {t("home.components.clashInfo.fields.uptime")}
           </Typography>
           <Typography variant="body2" fontWeight="medium">
             {formattedUptime}
@@ -66,7 +68,7 @@ export const ClashInfoCard = () => {
         <Divider />
         <Stack direction="row" justifyContent="space-between">
           <Typography variant="body2" color="text.secondary">
-            {t("Rules Count")}
+            {t("home.components.clashInfo.fields.rulesCount")}
           </Typography>
           <Typography variant="body2" fontWeight="medium">
             {rules.length}
@@ -85,7 +87,7 @@ export const ClashInfoCard = () => {
 
   return (
     <EnhancedCard
-      title={t("Clash Info")}
+      title={t("home.components.clashInfo.title")}
       icon={<DeveloperBoardOutlined />}
       iconColor="warning"
       action={null}

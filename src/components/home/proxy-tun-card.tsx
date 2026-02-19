@@ -1,4 +1,9 @@
-import { useTranslation } from "react-i18next";
+import {
+  ComputerRounded,
+  TroubleshootRounded,
+  HelpOutlineRounded,
+  SvgIconComponent,
+} from "@mui/icons-material";
 import {
   Box,
   Typography,
@@ -9,20 +14,14 @@ import {
   useTheme,
   Fade,
 } from "@mui/material";
-import { useState, useMemo, memo, FC, useEffect } from "react";
-import ProxyControlSwitches from "@/components/shared/ProxyControlSwitches";
-import {
-  ComputerRounded,
-  TroubleshootRounded,
-  HelpOutlineRounded,
-  SvgIconComponent,
-} from "@mui/icons-material";
-import { useVerge } from "@/hooks/use-verge";
-import { useSystemState } from "@/hooks/use-system-state";
+import { useState, useMemo, memo, FC } from "react";
+import { useTranslation } from "react-i18next";
+
+import ProxyControlSwitches from "@/components/shared/proxy-control-switches";
 import { useSystemProxyState } from "@/hooks/use-system-proxy-state";
-import { showNotice } from "@/services/noticeService";
-import { getRunningMode } from "@/services/cmds";
-import { mutate } from "swr";
+import { useSystemState } from "@/hooks/use-system-state";
+import { useVerge } from "@/hooks/use-verge";
+import { showNotice } from "@/services/notice-service";
 
 const LOCAL_STORAGE_TAB_KEY = "clash-verge-proxy-active-tab";
 
@@ -142,62 +141,46 @@ export const ProxyTunCard: FC = () => {
     () => localStorage.getItem(LOCAL_STORAGE_TAB_KEY) || "system",
   );
 
-  const [localServiceOk, setLocalServiceOk] = useState(false);
-
   const { verge } = useVerge();
-  const { isAdminMode } = useSystemState();
-  const { indicator: systemProxyIndicator } = useSystemProxyState();
+  const { isTunModeAvailable } = useSystemState();
+  const { configState: systemProxyConfigState } = useSystemProxyState();
 
   const { enable_tun_mode } = verge ?? {};
 
-  const updateLocalStatus = async () => {
-    try {
-      const runningMode = await getRunningMode();
-      const serviceStatus = runningMode === "Service";
-      setLocalServiceOk(serviceStatus);
-      mutate("isServiceAvailable", serviceStatus, false);
-    } catch (error) {
-      console.error("更新TUN状态失败:", error);
-    }
-  };
-
-  useEffect(() => {
-    updateLocalStatus();
-  }, []);
-
-  const isTunAvailable = localServiceOk || isAdminMode;
-
-  const handleError = (err: Error) => {
-    showNotice("error", err.message || err.toString());
+  const handleError = (err: unknown) => {
+    showNotice.error(err);
   };
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
     localStorage.setItem(LOCAL_STORAGE_TAB_KEY, tab);
-    if (tab === "tun") {
-      updateLocalStatus();
-    }
   };
 
   const tabDescription = useMemo(() => {
     if (activeTab === "system") {
       return {
-        text: systemProxyIndicator
-          ? t("System Proxy Enabled")
-          : t("System Proxy Disabled"),
-        tooltip: t("System Proxy Info"),
+        text: systemProxyConfigState
+          ? t("home.components.proxyTun.status.systemProxyEnabled")
+          : t("home.components.proxyTun.status.systemProxyDisabled"),
+        tooltip: t("home.components.proxyTun.tooltips.systemProxy"),
       };
     } else {
       return {
-        text: !isTunAvailable
-          ? t("TUN Mode Service Required")
+        text: !isTunModeAvailable
+          ? t("home.components.proxyTun.status.tunModeServiceRequired")
           : enable_tun_mode
-            ? t("TUN Mode Enabled")
-            : t("TUN Mode Disabled"),
-        tooltip: t("TUN Mode Intercept Info"),
+            ? t("home.components.proxyTun.status.tunModeEnabled")
+            : t("home.components.proxyTun.status.tunModeDisabled"),
+        tooltip: t("home.components.proxyTun.tooltips.tunMode"),
       };
     }
-  }, [activeTab, systemProxyIndicator, enable_tun_mode, isTunAvailable, t]);
+  }, [
+    activeTab,
+    systemProxyConfigState,
+    enable_tun_mode,
+    isTunModeAvailable,
+    t,
+  ]);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", width: "100%" }}>
@@ -215,15 +198,15 @@ export const ProxyTunCard: FC = () => {
           isActive={activeTab === "system"}
           onClick={() => handleTabChange("system")}
           icon={ComputerRounded}
-          label={t("System Proxy")}
-          hasIndicator={systemProxyIndicator}
+          label={t("settings.sections.system.toggles.systemProxy")}
+          hasIndicator={systemProxyConfigState}
         />
         <TabButton
           isActive={activeTab === "tun"}
           onClick={() => handleTabChange("tun")}
           icon={TroubleshootRounded}
-          label={t("Tun Mode")}
-          hasIndicator={enable_tun_mode && isTunAvailable}
+          label={t("settings.sections.system.toggles.tunMode")}
+          hasIndicator={enable_tun_mode && isTunModeAvailable}
         />
       </Stack>
 
@@ -253,7 +236,12 @@ export const ProxyTunCard: FC = () => {
       >
         <ProxyControlSwitches
           onError={handleError}
-          label={activeTab === "system" ? t("System Proxy") : t("Tun Mode")}
+          label={
+            activeTab === "system"
+              ? t("settings.sections.system.toggles.systemProxy")
+              : t("settings.sections.system.toggles.tunMode")
+          }
+          noRightPadding={true}
         />
       </Box>
     </Box>

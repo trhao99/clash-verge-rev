@@ -1,3 +1,6 @@
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { DeleteForeverRounded, UndoRounded } from "@mui/icons-material";
 import {
   Box,
   IconButton,
@@ -6,12 +9,8 @@ import {
   alpha,
   styled,
 } from "@mui/material";
-import { DeleteForeverRounded, UndoRounded } from "@mui/icons-material";
-import { useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import { downloadIconCache } from "@/services/cmds";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+
+import { useIconCache } from "@/hooks/use-icon-cache";
 interface Props {
   type: "prepend" | "original" | "delete" | "append";
   group: IProxyGroupConfig;
@@ -19,45 +18,28 @@ interface Props {
 }
 
 export const GroupItem = (props: Props) => {
-  let { type, group, onDelete } = props;
+  const { type, group, onDelete } = props;
   const sortable = type === "prepend" || type === "append";
 
   const {
-    attributes,
-    listeners,
-    setNodeRef,
+    attributes: sortableAttributes,
+    listeners: sortableListeners,
+    setNodeRef: sortableSetNodeRef,
     transform,
     transition,
     isDragging,
-  } = sortable
-    ? useSortable({ id: group.name })
-    : {
-        attributes: {},
-        listeners: {},
-        setNodeRef: null,
-        transform: null,
-        transition: null,
-        isDragging: false,
-      };
+  } = useSortable({
+    id: group.name,
+    disabled: !sortable,
+  });
+  const dragAttributes = sortable ? sortableAttributes : undefined;
+  const dragListeners = sortable ? sortableListeners : undefined;
+  const dragNodeRef = sortable ? sortableSetNodeRef : undefined;
 
-  const [iconCachePath, setIconCachePath] = useState("");
-
-  useEffect(() => {
-    initIconCachePath();
-  }, [group]);
-
-  async function initIconCachePath() {
-    if (group.icon && group.icon.trim().startsWith("http")) {
-      const fileName =
-        group.name.replaceAll(" ", "") + "-" + getFileName(group.icon);
-      const iconPath = await downloadIconCache(group.icon, fileName);
-      setIconCachePath(convertFileSrc(iconPath));
-    }
-  }
-
-  function getFileName(url: string) {
-    return url.substring(url.lastIndexOf("/") + 1);
-  }
+  const iconCachePath = useIconCache({
+    icon: group.icon,
+    cacheKey: group.name.replaceAll(" ", ""),
+  });
 
   return (
     <ListItem
@@ -104,12 +86,16 @@ export const GroupItem = (props: Props) => {
         <img
           src={`data:image/svg+xml;base64,${btoa(group.icon ?? "")}`}
           width="32px"
+          style={{
+            marginRight: "12px",
+            borderRadius: "6px",
+          }}
         />
       )}
       <ListItemText
-        {...attributes}
-        {...listeners}
-        ref={setNodeRef}
+        {...(dragAttributes ?? {})}
+        {...(dragListeners ?? {})}
+        ref={dragNodeRef}
         sx={{ cursor: sortable ? "move" : "" }}
         primary={
           <StyledPrimary
@@ -132,11 +118,13 @@ export const GroupItem = (props: Props) => {
             </Box>
           </ListItemTextChild>
         }
-        secondaryTypographyProps={{
-          sx: {
-            display: "flex",
-            alignItems: "center",
-            color: "#ccc",
+        slotProps={{
+          secondary: {
+            sx: {
+              display: "flex",
+              alignItems: "center",
+              color: "#ccc",
+            },
           },
         }}
       />

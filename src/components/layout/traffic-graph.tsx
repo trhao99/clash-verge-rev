@@ -1,5 +1,6 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { useTheme } from "@mui/material";
+import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
+import { Traffic } from "tauri-plugin-mihomo-api";
 
 const maxPoint = 30;
 
@@ -14,28 +15,26 @@ const downLineWidth = 4;
 
 const defaultList = Array(maxPoint + 2).fill({ up: 0, down: 0 });
 
-type TrafficData = { up: number; down: number };
-
 export interface TrafficRef {
-  appendData: (data: TrafficData) => void;
+  appendData: (data: Traffic) => void;
   toggleStyle: () => void;
 }
 
 /**
  * draw the traffic graph
  */
-export const TrafficGraph = forwardRef<TrafficRef>((props, ref) => {
+export function TrafficGraph({ ref }: { ref?: Ref<TrafficRef> }) {
   const countRef = useRef(0);
   const styleRef = useRef(true);
-  const listRef = useRef<TrafficData[]>(defaultList);
+  const listRef = useRef<Traffic[]>(defaultList);
   const canvasRef = useRef<HTMLCanvasElement>(null!);
 
-  const cacheRef = useRef<TrafficData | null>(null);
+  const cacheRef = useRef<Traffic | null>(null);
 
   const { palette } = useTheme();
 
   useImperativeHandle(ref, () => ({
-    appendData: (data: TrafficData) => {
+    appendData: (data: Traffic) => {
       cacheRef.current = data;
     },
     toggleStyle: () => {
@@ -108,10 +107,7 @@ export const TrafficGraph = forwardRef<TrafficRef>((props, ref) => {
         countY(y),
       ]);
 
-      let x = points[0][0];
-      let y = points[0][1];
-
-      context.moveTo(x, y);
+      context.moveTo(points[0][0], points[0][1]);
 
       for (let i = 1; i < points.length; i++) {
         const p1 = points[i];
@@ -121,8 +117,6 @@ export const TrafficGraph = forwardRef<TrafficRef>((props, ref) => {
         const y1 = (p1[1] + p2[1]) / 2;
 
         context.quadraticCurveTo(p1[0], p1[1], x1, y1);
-        x = x1;
-        y = y1;
       }
     };
 
@@ -173,7 +167,11 @@ export const TrafficGraph = forwardRef<TrafficRef>((props, ref) => {
       context.globalAlpha = upLineAlpha;
       context.lineWidth = upLineWidth;
       context.strokeStyle = upLineColor;
-      lineStyle ? drawBezier(listUp, offset) : drawLine(listUp, offset);
+      if (lineStyle) {
+        drawBezier(listUp, offset);
+      } else {
+        drawLine(listUp, offset);
+      }
       context.stroke();
       context.closePath();
 
@@ -181,7 +179,11 @@ export const TrafficGraph = forwardRef<TrafficRef>((props, ref) => {
       context.globalAlpha = downLineAlpha;
       context.lineWidth = downLineWidth;
       context.strokeStyle = downLineColor;
-      lineStyle ? drawBezier(listDown, offset) : drawLine(listDown, offset);
+      if (lineStyle) {
+        drawBezier(listDown, offset);
+      } else {
+        drawLine(listDown, offset);
+      }
       context.stroke();
       context.closePath();
 
@@ -196,4 +198,4 @@ export const TrafficGraph = forwardRef<TrafficRef>((props, ref) => {
   }, [palette]);
 
   return <canvas ref={canvasRef} style={{ width: "100%", height: "100%" }} />;
-});
+}

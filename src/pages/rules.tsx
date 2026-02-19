@@ -1,14 +1,14 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { Box } from "@mui/material";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
-import { Box } from "@mui/material";
-import { BaseEmpty, BasePage } from "@/components/base";
-import RuleItem from "@/components/rule/rule-item";
-import { ProviderButton } from "@/components/rule/provider-button";
-import { BaseSearchBox } from "@/components/base/base-search-box";
+
+import { BaseEmpty, BasePage, BaseSearchBox } from "@/components/base";
 import { ScrollTopButton } from "@/components/layout/scroll-top-button";
-import { useAppData } from "@/providers/app-data-provider";
+import { ProviderButton } from "@/components/rule/provider-button";
+import RuleItem from "@/components/rule/rule-item";
 import { useVisibility } from "@/hooks/use-visibility";
+import { useAppData } from "@/providers/app-data-context";
 
 const RulesPage = () => {
   const { t } = useTranslation();
@@ -30,7 +30,13 @@ const RulesPage = () => {
   }, [refreshRules, refreshRuleProviders, pageVisible]);
 
   const filteredRules = useMemo(() => {
-    return rules.filter((item) => match(item.payload));
+    const rulesWithLineNo = rules.map((item, index) => ({
+      ...item,
+      // UI-only derived data; keep app context/SWR data immutable
+      lineNo: index + 1,
+    }));
+
+    return rulesWithLineNo.filter((item) => match(item.payload ?? ""));
   }, [rules, match]);
 
   const scrollToTop = () => {
@@ -47,7 +53,7 @@ const RulesPage = () => {
   return (
     <BasePage
       full
-      title={t("Rules")}
+      title={t("rules.page.title")}
       contentStyle={{
         height: "100%",
         display: "flex",
@@ -73,7 +79,7 @@ const RulesPage = () => {
         <BaseSearchBox onSearch={(match) => setMatch(() => match)} />
       </Box>
 
-      {filteredRules.length > 0 ? (
+      {filteredRules && filteredRules.length > 0 ? (
         <>
           <Virtuoso
             ref={virtuosoRef}
@@ -81,9 +87,7 @@ const RulesPage = () => {
             style={{
               flex: 1,
             }}
-            itemContent={(index, item) => (
-              <RuleItem index={index + 1} value={item} />
-            )}
+            itemContent={(_index, item) => <RuleItem value={item} />}
             followOutput={"smooth"}
             scrollerRef={(ref) => {
               if (ref) ref.addEventListener("scroll", handleScroll);

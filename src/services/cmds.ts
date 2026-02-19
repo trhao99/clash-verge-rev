@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { showNotice } from "@/services/noticeService";
+import dayjs from "dayjs";
+import { getProxies, getProxyProviders } from "tauri-plugin-mihomo-api";
+
+import { showNotice } from "@/services/notice-service";
+import { debugLog } from "@/utils/debug";
 
 export async function copyClashEnv() {
   return invoke<void>("copy_clash_env");
@@ -14,7 +18,7 @@ export async function enhanceProfiles() {
 }
 
 export async function patchProfilesConfig(profiles: IProfilesConfig) {
-  return invoke<void>("patch_profiles_config", { profiles });
+  return invoke<boolean>("patch_profiles_config", { profiles });
 }
 
 export async function createProfile(
@@ -86,12 +90,161 @@ export async function getRuntimeLogs() {
   return invoke<Record<string, [string, string][]>>("get_runtime_logs");
 }
 
+export async function getRuntimeProxyChainConfig(proxyChainExitNode: string) {
+  return invoke<string>("get_runtime_proxy_chain_config", {
+    proxyChainExitNode,
+  });
+}
+
+export async function updateProxyChainConfigInRuntime(proxyChainConfig: any) {
+  return invoke<void>("update_proxy_chain_config_in_runtime", {
+    proxyChainConfig,
+  });
+}
+
 export async function patchClashConfig(payload: Partial<IConfigData>) {
   return invoke<void>("patch_clash_config", { payload });
 }
 
-export async function patchClashMode(payload: String) {
+export async function patchClashMode(payload: string) {
   return invoke<void>("patch_clash_mode", { payload });
+}
+
+export async function syncTrayProxySelection() {
+  return invoke<void>("sync_tray_proxy_selection");
+}
+
+export async function calcuProxies(): Promise<{
+  global: IProxyGroupItem;
+  direct: IProxyItem;
+  groups: IProxyGroupItem[];
+  records: Record<string, IProxyItem>;
+  proxies: IProxyItem[];
+}> {
+  const [proxyResponse, providerResponse] = await Promise.all([
+    getProxies(),
+    calcuProxyProviders(),
+  ]);
+
+  const proxyRecord = proxyResponse.proxies;
+  const providerRecord = providerResponse;
+
+  // provider name map
+  const providerMap = Object.fromEntries(
+    Object.entries(providerRecord).flatMap(([provider, item]) =>
+      item!.proxies.map((p) => [p.name, { ...p, provider }]),
+    ),
+  );
+
+  // compatible with proxy-providers
+  const generateItem = (name: string) => {
+    if (proxyRecord[name]) return proxyRecord[name];
+    if (providerMap[name]) return providerMap[name];
+    return {
+      name,
+      type: "unknown",
+      udp: false,
+      xudp: false,
+      tfo: false,
+      mptcp: false,
+      smux: false,
+      history: [],
+    };
+  };
+
+  const { GLOBAL: global, DIRECT: direct, REJECT: reject } = proxyRecord;
+
+  let groups: IProxyGroupItem[] = Object.values(proxyRecord).reduce<
+    IProxyGroupItem[]
+  >((acc, each) => {
+    if (each?.name !== "GLOBAL" && each?.all) {
+      acc.push({
+        ...each,
+        all: each.all!.map((item) => generateItem(item)),
+      });
+    }
+
+    return acc;
+  }, []);
+
+  if (global?.all) {
+    const globalGroups: IProxyGroupItem[] = global.all.reduce<
+      IProxyGroupItem[]
+    >((acc, name) => {
+      if (proxyRecord[name]?.all) {
+        acc.push({
+          ...proxyRecord[name],
+          all: proxyRecord[name].all!.map((item) => generateItem(item)),
+        });
+      }
+      return acc;
+    }, []);
+
+    const globalNames = new Set(globalGroups.map((each) => each.name));
+    groups = groups
+      .filter((group) => {
+        return !globalNames.has(group.name);
+      })
+      .concat(globalGroups);
+  }
+
+  const proxies = [direct, reject].concat(
+    Object.values(proxyRecord).filter(
+      (p) => !p?.all?.length && p?.name !== "DIRECT" && p?.name !== "REJECT",
+    ),
+  );
+
+  const _global = {
+    ...global,
+    all: global?.all?.map((item) => generateItem(item)) || [],
+  };
+
+  return {
+    global: _global as IProxyGroupItem,
+    direct: direct as IProxyItem,
+    groups,
+    records: proxyRecord as Record<string, IProxyItem>,
+    proxies: (proxies as IProxyItem[]) ?? [],
+  };
+}
+
+export async function calcuProxyProviders() {
+  const providers = await getProxyProviders();
+  return Object.fromEntries(
+    Object.entries(providers.providers)
+      .sort()
+      .filter(
+        ([_, item]) =>
+          item?.vehicleType === "HTTP" || item?.vehicleType === "File",
+      ),
+  );
+}
+
+export async function getClashLogs() {
+  const regex = /time="(.+?)"\s+level=(.+?)\s+msg="(.+?)"/;
+  const newRegex = /(.+?)\s+(.+?)\s+(.+)/;
+  const logs = await invoke<string[]>("get_clash_logs");
+
+  return logs.reduce<ILogItem[]>((acc, log) => {
+    const result = log.match(regex);
+    if (result) {
+      const [_, _time, type, payload] = result;
+      const time = dayjs(_time).format("MM-DD HH:mm:ss");
+      acc.push({ time, type, payload });
+      return acc;
+    }
+
+    const result2 = log.match(newRegex);
+    if (result2) {
+      const [_, time, type, payload] = result2;
+      acc.push({ time, type, payload });
+    }
+    return acc;
+  }, []);
+}
+
+export async function clearLogs() {
+  return invoke<void>("clear_logs");
 }
 
 export async function getVergeConfig() {
@@ -112,12 +265,12 @@ export async function getSystemProxy() {
 
 export async function getAutotemProxy() {
   try {
-    console.log("[API] 开始调用 get_auto_proxy");
+    debugLog("[API] 开始调用 get_auto_proxy");
     const result = await invoke<{
       enable: boolean;
       url: string;
     }>("get_auto_proxy");
-    console.log("[API] get_auto_proxy 调用成功:", result);
+    debugLog("[API] get_auto_proxy 调用成功:", result);
     return result;
   } catch (error) {
     console.error("[API] get_auto_proxy 调用失败:", error);
@@ -162,28 +315,22 @@ export async function getAppDir() {
 }
 
 export async function openAppDir() {
-  return invoke<void>("open_app_dir").catch((err) =>
-    showNotice("error", err?.message || err.toString()),
-  );
+  return invoke<void>("open_app_dir").catch((err) => showNotice.error(err));
 }
 
 export async function openCoreDir() {
-  return invoke<void>("open_core_dir").catch((err) =>
-    showNotice("error", err?.message || err.toString()),
-  );
+  return invoke<void>("open_core_dir").catch((err) => showNotice.error(err));
 }
 
 export async function openLogsDir() {
-  return invoke<void>("open_logs_dir").catch((err) =>
-    showNotice("error", err?.message || err.toString()),
-  );
+  return invoke<void>("open_logs_dir").catch((err) => showNotice.error(err));
 }
 
 export const openWebUrl = async (url: string) => {
   try {
     await invoke("open_web_url", { url });
   } catch (err: any) {
-    showNotice("error", err.toString());
+    showNotice.error(err);
   }
 };
 
@@ -193,13 +340,10 @@ export async function cmdGetProxyDelay(
   url?: string,
 ) {
   // 确保URL不为空
-  const testUrl = url || "https://cp.cloudflare.com/generate_204";
-  console.log(
-    `[API] 调用延迟测试API，代理: ${name}, 超时: ${timeout}ms, URL: ${testUrl}`,
-  );
+  const testUrl = url || "http://104.16.132.229/generate_204";
 
   try {
-    name = encodeURIComponent(name);
+    // 不再在前端编码代理名称，由后端统一处理编码
     const result = await invoke<{ delay: number }>(
       "clash_api_get_proxy_delay",
       {
@@ -211,29 +355,15 @@ export async function cmdGetProxyDelay(
 
     // 验证返回结果中是否有delay字段，并且值是一个有效的数字
     if (result && typeof result.delay === "number") {
-      console.log(
-        `[API] 延迟测试API调用成功，代理: ${name}, 延迟: ${result.delay}ms`,
-      );
       return result;
     } else {
-      console.error(
-        `[API] 延迟测试API返回无效结果，代理: ${name}, 结果:`,
-        result,
-      );
       // 返回一个有效的结果对象，但标记为超时
       return { delay: 1e6 };
     }
-  } catch (error) {
-    console.error(`[API] 延迟测试API调用失败，代理: ${name}`, error);
+  } catch {
     // 返回一个有效的结果对象，但标记为错误
     return { delay: 1e6 };
   }
-}
-
-/// 用于profile切换等场景
-export async function forceRefreshProxies() {
-  console.log("[API] 强制刷新代理缓存");
-  return invoke<any>("force_refresh_proxies");
 }
 
 export async function cmdTestDelay(url: string) {
@@ -242,7 +372,7 @@ export async function cmdTestDelay(url: string) {
 
 export async function invoke_uwp_tool() {
   return invoke<void>("invoke_uwp_tool").catch((err) =>
-    showNotice("error", err?.message || err.toString(), 1500),
+    showNotice.error(err, 1500),
   );
 }
 
@@ -305,18 +435,38 @@ export async function createWebdavBackup() {
   return invoke<void>("create_webdav_backup");
 }
 
+export async function createLocalBackup() {
+  return invoke<void>("create_local_backup");
+}
+
 export async function deleteWebdavBackup(filename: string) {
   return invoke<void>("delete_webdav_backup", { filename });
+}
+
+export async function deleteLocalBackup(filename: string) {
+  return invoke<void>("delete_local_backup", { filename });
 }
 
 export async function restoreWebDavBackup(filename: string) {
   return invoke<void>("restore_webdav_backup", { filename });
 }
 
+export async function restoreLocalBackup(filename: string) {
+  return invoke<void>("restore_local_backup", { filename });
+}
+
+export async function importLocalBackup(source: string) {
+  return invoke<string>("import_local_backup", { source });
+}
+
+export async function exportLocalBackup(filename: string, destination: string) {
+  return invoke<void>("export_local_backup", { filename, destination });
+}
+
 export async function saveWebdavConfig(
   url: string,
   username: string,
-  password: String,
+  password: string,
 ) {
   return invoke<void>("save_webdav_config", {
     url,
@@ -326,11 +476,15 @@ export async function saveWebdavConfig(
 }
 
 export async function listWebDavBackup() {
-  let list: IWebDavFile[] = await invoke<IWebDavFile[]>("list_webdav_backup");
+  const list: IWebDavFile[] = await invoke<IWebDavFile[]>("list_webdav_backup");
   list.map((item) => {
     item.filename = item.href.split("/").pop() as string;
   });
   return list;
+}
+
+export async function listLocalBackup() {
+  return invoke<ILocalBackupFile[]>("list_local_backup");
 }
 
 export async function scriptValidateNotice(status: string, msg: string) {
@@ -390,7 +544,7 @@ export const exit_lightweight_mode = async () => {
 
 export const isAdmin = async () => {
   try {
-    return await invoke<boolean>("is_admin");
+    return await invoke<boolean>("app_is_admin");
   } catch (error) {
     console.error("检查管理员权限失败:", error);
     return false;
@@ -400,3 +554,12 @@ export const isAdmin = async () => {
 export async function getNextUpdateTime(uid: string) {
   return invoke<number | null>("get_next_update_time", { uid });
 }
+
+export const isPortInUse = async (port: number) => {
+  try {
+    return await invoke<boolean>("is_port_in_use", { port });
+  } catch (error) {
+    console.error("检查端口使用状态失败:", error);
+    return false;
+  }
+};

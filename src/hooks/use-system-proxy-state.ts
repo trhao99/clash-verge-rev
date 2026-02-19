@@ -1,8 +1,10 @@
+import { useLockFn } from "ahooks";
 import useSWR, { mutate } from "swr";
+import { closeAllConnections } from "tauri-plugin-mihomo-api";
+
 import { useVerge } from "@/hooks/use-verge";
+import { useAppData } from "@/providers/app-data-context";
 import { getAutotemProxy } from "@/services/cmds";
-import { useAppData } from "@/providers/app-data-provider";
-import { closeAllConnections } from "@/services/api";
 
 // 系统代理状态检测统一逻辑
 export const useSystemProxyState = () => {
@@ -18,13 +20,18 @@ export const useSystemProxyState = () => {
   const getSystemProxyActualState = () => {
     const userEnabled = enable_system_proxy ?? false;
 
+    // 用户配置状态应该与系统实际状态一致
+    // 如果用户启用了系统代理，检查实际的系统状态
     if (userEnabled) {
-      return true;
+      if (proxy_auto_config) {
+        return autoproxy?.enable ?? false;
+      } else {
+        return sysproxy?.enable ?? false;
+      }
     }
 
-    return autoproxy?.enable === false && sysproxy?.enable === false
-      ? false
-      : userEnabled;
+    // 用户没有启用时，返回 false
+    return false;
   };
 
   const getSystemProxyIndicator = () => {
@@ -35,30 +42,30 @@ export const useSystemProxyState = () => {
     }
   };
 
-  const updateProxyStatus = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 100));
+  const updateProxyStatus = async (isEnabling: boolean) => {
+    // 关闭时更快响应，开启时等待系统确认
+    const delay = isEnabling ? 20 : 10;
+    await new Promise((resolve) => setTimeout(resolve, delay));
     await mutate("getSystemProxy");
     await mutate("getAutotemProxy");
   };
 
-  const toggleSystemProxy = (enabled: boolean) => {
+  const toggleSystemProxy = useLockFn(async (enabled: boolean) => {
     mutateVerge({ ...verge, enable_system_proxy: enabled }, false);
 
-    setTimeout(async () => {
-      try {
-        if (!enabled && verge?.auto_close_connection) {
-          closeAllConnections();
-        }
-        await patchVerge({ enable_system_proxy: enabled });
-
-        updateProxyStatus();
-      } catch (error) {
-        mutateVerge({ ...verge, enable_system_proxy: !enabled }, false);
+    try {
+      if (!enabled && verge?.auto_close_connection) {
+        await closeAllConnections();
       }
-    }, 0);
-
-    return Promise.resolve();
-  };
+      await patchVerge({ enable_system_proxy: enabled });
+      await updateProxyStatus(enabled);
+    } catch (error) {
+      console.warn("[useSystemProxyState] toggleSystemProxy failed:", error);
+      mutateVerge({ ...verge, enable_system_proxy: !enabled }, false);
+      await updateProxyStatus(!enabled);
+      throw error;
+    }
+  });
 
   return {
     actualState: getSystemProxyActualState(),

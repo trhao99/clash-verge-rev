@@ -1,5 +1,7 @@
 import { styled, Box } from "@mui/material";
-import { SearchState } from "@/components/base/base-search-box";
+import type { ReactNode } from "react";
+
+import type { SearchState } from "@/components/base";
 
 const Item = styled(Box)(({ theme: { palette, typography } }) => ({
   padding: "8px 0",
@@ -66,17 +68,38 @@ const LogItem = ({ value, searchState }: Props) => {
       }
 
       const flags = searchState.matchCase ? "g" : "gi";
-      const parts = text.split(new RegExp(`(${pattern})`, flags));
+      const regex = new RegExp(pattern, flags);
+      const elements: ReactNode[] = [];
+      let lastIndex = 0;
+      let match: RegExpExecArray | null;
 
-      return parts.map((part, index) => {
-        return index % 2 === 1 ? (
-          <span key={index} className="highlight">
-            {part}
-          </span>
-        ) : (
-          part
+      while ((match = regex.exec(text)) !== null) {
+        const start = match.index;
+        const matchText = match[0];
+
+        if (matchText === "") {
+          regex.lastIndex += 1;
+          continue;
+        }
+
+        if (start > lastIndex) {
+          elements.push(text.slice(lastIndex, start));
+        }
+
+        elements.push(
+          <span key={`highlight-${start}`} className="highlight">
+            {matchText}
+          </span>,
         );
-      });
+
+        lastIndex = start + matchText.length;
+      }
+
+      if (lastIndex < text.length) {
+        elements.push(text.slice(lastIndex));
+      }
+
+      return elements.length ? elements : text;
     } catch {
       return text;
     }

@@ -1,23 +1,9 @@
-import { BaseDialog, DialogRef, Switch } from "@/components/base";
-import { BaseFieldset } from "@/components/base/base-fieldset";
-import { TooltipIcon } from "@/components/base/base-tooltip-icon";
-import { EditorViewer } from "@/components/profile/editor-viewer";
-import { useVerge } from "@/hooks/use-verge";
-import { useAppData } from "@/providers/app-data-provider";
-import { getClashConfig } from "@/services/api";
-import {
-  getAutotemProxy,
-  getNetworkInterfacesInfo,
-  getSystemHostname,
-  getSystemProxy,
-  patchVergeConfig,
-} from "@/services/cmds";
-import { showNotice } from "@/services/noticeService";
-import getSystem from "@/utils/get-system";
 import { EditRounded } from "@mui/icons-material";
 import {
   Autocomplete,
+  Box,
   Button,
+  Chip,
   InputAdornment,
   List,
   ListItem,
@@ -32,10 +18,38 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import useSWR, { mutate } from "swr";
+import { mutate } from "swr";
+
+import {
+  BaseDialog,
+  BaseFieldset,
+  BaseSplitChipEditor,
+  DialogRef,
+  Switch,
+  TooltipIcon,
+} from "@/components/base";
+import { EditorViewer } from "@/components/profile/editor-viewer";
+import { useVerge } from "@/hooks/use-verge";
+import { useAppData } from "@/providers/app-data-context";
+import {
+  getAutotemProxy,
+  getNetworkInterfacesInfo,
+  getSystemHostname,
+  getSystemProxy,
+  patchVergeConfig,
+} from "@/services/cmds";
+import { showNotice } from "@/services/notice-service";
+import { debugLog } from "@/utils/debug";
+import getSystem from "@/utils/get-system";
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 const DEFAULT_PAC = `function FindProxyForURL(url, host) {
   return "PROXY %proxy_host%:%mixed-port%; SOCKS5 %proxy_host%:%mixed-port%; DIRECT;";
@@ -74,9 +88,16 @@ const getValidReg = (isWindows: boolean) => {
   return new RegExp(rValid);
 };
 
+const splitBypass = (value?: string) =>
+  (value ?? "")
+    .split(/[,\n;\r]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
   const { t } = useTranslation();
-  const isWindows = getSystem() === "windows";
+  const systemName = getSystem();
+  const isWindows = systemName === "windows";
   const validReg = useMemo(() => getValidReg(isWindows), [isWindows]);
 
   const [open, setOpen] = useState(false);
@@ -91,11 +112,14 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
   type AutoProxy = Awaited<ReturnType<typeof getAutotemProxy>>;
   const [autoproxy, setAutoproxy] = useState<AutoProxy>();
 
+  const { clashConfig } = useAppData();
+
   const {
     enable_system_proxy: enabled,
     proxy_auto_config,
     pac_file_content,
     enable_proxy_guard,
+    enable_bypass_check,
     use_default_bypass,
     system_proxy_bypass,
     proxy_guard_duration,
@@ -104,6 +128,7 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
 
   const [value, setValue] = useState({
     guard: enable_proxy_guard,
+    enable_bypass_check: enable_bypass_check ?? true,
     bypass: system_proxy_bypass,
     duration: proxy_guard_duration ?? 10,
     use_default: use_default_bypass ?? true,
@@ -112,66 +137,49 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
     proxy_host: proxy_host ?? "127.0.0.1",
   });
 
+  const separator = useMemo(() => (isWindows ? ";" : ","), [isWindows]);
+
   const defaultBypass = () => {
     if (isWindows) {
       return "localhost;127.*;192.168.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;<local>";
     }
-    if (getSystem() === "linux") {
-      return "localhost,127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,172.29.0.0/16,::1";
+    if (systemName === "linux") {
+      return "localhost,127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,::1";
     }
-    return "127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,172.29.0.0/16,localhost,*.local,*.crashlytics.com,<local>";
+    return "127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,localhost,*.local,*.crashlytics.com,<local>";
   };
 
-  const { data: clashConfig, mutate: mutateClash } = useSWR(
-    "getClashConfig",
-    getClashConfig,
-    {
-      revalidateOnFocus: false,
-      revalidateIfStale: true,
-      dedupingInterval: 1000,
-      errorRetryInterval: 5000,
-    },
-  );
-
-  const [prevMixedPort, setPrevMixedPort] = useState(
-    clashConfig?.["mixed-port"],
-  );
+  const prevMixedPortRef = useRef(clashConfig?.mixedPort);
 
   useEffect(() => {
-    if (
-      clashConfig?.["mixed-port"] &&
-      clashConfig?.["mixed-port"] !== prevMixedPort
-    ) {
-      setPrevMixedPort(clashConfig?.["mixed-port"]);
-      resetSystemProxy();
+    const mixedPort = clashConfig?.mixedPort;
+    if (!mixedPort || mixedPort === prevMixedPortRef.current) {
+      return;
     }
-  }, [clashConfig?.["mixed-port"]]);
 
-  const resetSystemProxy = async () => {
-    try {
-      const currentSysProxy = await getSystemProxy();
-      const currentAutoProxy = await getAutotemProxy();
+    prevMixedPortRef.current = mixedPort;
 
-      if (value.pac ? currentAutoProxy?.enable : currentSysProxy?.enable) {
-        // 临时关闭系统代理
-        await patchVergeConfig({ enable_system_proxy: false });
+    const updateProxy = async () => {
+      try {
+        const currentSysProxy = await getSystemProxy();
+        const currentAutoProxy = await getAutotemProxy();
 
-        // 减少等待时间
-        await new Promise((resolve) => setTimeout(resolve, 200));
-
-        // 重新开启系统代理
-        await patchVergeConfig({ enable_system_proxy: true });
-
-        // 更新UI状态
-        await Promise.all([
-          mutate("getSystemProxy"),
-          mutate("getAutotemProxy"),
-        ]);
+        if (value.pac ? currentAutoProxy?.enable : currentSysProxy?.enable) {
+          await patchVergeConfig({ enable_system_proxy: false });
+          await sleep(200);
+          await patchVergeConfig({ enable_system_proxy: true });
+          await Promise.all([
+            mutate("getSystemProxy"),
+            mutate("getAutotemProxy"),
+          ]);
+        }
+      } catch (err) {
+        showNotice.error(err);
       }
-    } catch (err: any) {
-      showNotice("error", err.toString());
-    }
-  };
+    };
+
+    updateProxy();
+  }, [clashConfig?.mixedPort, value.pac]);
 
   const { systemProxyAddress } = useAppData();
 
@@ -183,7 +191,7 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
 
     if (isPacMode) {
       const host = value.proxy_host || "127.0.0.1";
-      const port = verge?.verge_mixed_port || clashConfig["mixed-port"] || 7897;
+      const port = verge?.verge_mixed_port || clashConfig.mixedPort || 7897;
       return `${host}:${port}`;
     } else {
       return systemProxyAddress;
@@ -202,11 +210,20 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
     return `http://${host}:${port}/commands/pac`;
   }, [value.proxy_host]);
 
+  const bypassError =
+    value.enable_bypass_check &&
+    !value.pac &&
+    !value.use_default &&
+    value.bypass
+      ? !validReg.test(value.bypass)
+      : false;
+
   useImperativeHandle(ref, () => ({
     open: () => {
       setOpen(true);
       setValue({
         guard: enable_proxy_guard,
+        enable_bypass_check: enable_bypass_check ?? true,
         bypass: system_proxy_bypass,
         duration: proxy_guard_duration ?? 10,
         use_default: use_default_bypass ?? true,
@@ -244,7 +261,7 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
       let hostname = "";
       try {
         hostname = await getSystemHostname();
-        console.log("获取到主机名:", hostname);
+        debugLog("获取到主机名:", hostname);
       } catch (err) {
         console.error("获取主机名失败:", err);
       }
@@ -258,12 +275,12 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
         if (hostname !== "localhost" && hostname !== "127.0.0.1") {
           hostname = hostname + ".local";
           options.push(hostname);
-          console.log("主机名已添加到选项中:", hostname);
+          debugLog("主机名已添加到选项中:", hostname);
         } else {
-          console.log("主机名与已有选项重复:", hostname);
+          debugLog("主机名与已有选项重复:", hostname);
         }
       } else {
-        console.log("主机名为空");
+        debugLog("主机名为空");
       }
 
       // 添加IP地址
@@ -271,7 +288,7 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
 
       // 去重
       const uniqueOptions = Array.from(new Set(options));
-      console.log("最终选项列表:", uniqueOptions);
+      debugLog("最终选项列表:", uniqueOptions);
       setHostOptions(uniqueOptions);
     } catch (error) {
       console.error("获取网络接口失败:", error);
@@ -282,14 +299,17 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
 
   const onSave = useLockFn(async () => {
     if (value.duration < 1) {
-      showNotice(
-        "error",
-        t("Proxy Daemon Duration Cannot be Less than 1 Second"),
-      );
+      showNotice.error("settings.modals.sysproxy.messages.durationTooShort");
       return;
     }
-    if (value.bypass && !validReg.test(value.bypass)) {
-      showNotice("error", t("Invalid Bypass Format"));
+    if (
+      value.enable_bypass_check &&
+      !value.pac &&
+      !value.use_default &&
+      value.bypass &&
+      !validReg.test(value.bypass)
+    ) {
+      showNotice.error("settings.modals.sysproxy.messages.invalidBypass");
       return;
     }
 
@@ -299,14 +319,14 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
     const ipv6Regex =
       /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/;
     const hostnameRegex =
-      /^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$/;
+      /^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])$/;
 
     if (
       !ipv4Regex.test(value.proxy_host) &&
       !ipv6Regex.test(value.proxy_host) &&
       !hostnameRegex.test(value.proxy_host)
     ) {
-      showNotice("error", t("Invalid Proxy Host Format"));
+      showNotice.error("settings.modals.sysproxy.messages.invalidProxyHost");
       return;
     }
 
@@ -317,6 +337,9 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
 
     if (value.guard !== enable_proxy_guard) {
       patch.enable_proxy_guard = value.guard;
+    }
+    if (value.enable_bypass_check !== enable_bypass_check) {
+      patch.enable_bypass_check = value.enable_bypass_check;
     }
     if (value.duration !== proxy_guard_duration) {
       patch.proxy_guard_duration = value.duration;
@@ -335,7 +358,7 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
     if (pacContent) {
       pacContent = pacContent.replace(/%proxy_host%/g, value.proxy_host);
       // 将 mixed-port 转换为字符串
-      const mixedPortStr = (clashConfig?.["mixed-port"] || "").toString();
+      const mixedPortStr = (clashConfig?.mixedPort || "").toString();
       pacContent = pacContent.replace(/%mixed-port%/g, mixedPortStr);
     }
 
@@ -406,10 +429,10 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
             console.warn("代理状态更新失败:", err);
           }
         }, 50);
-      } catch (err: any) {
+      } catch (err) {
         console.error("配置保存失败:", err);
         mutateVerge();
-        showNotice("error", err.toString());
+        showNotice.error(err);
         // setOpen(true);
       }
     });
@@ -418,10 +441,10 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
   return (
     <BaseDialog
       open={open}
-      title={t("System Proxy Setting")}
+      title={t("settings.modals.sysproxy.title")}
       contentSx={{ width: 450, maxHeight: 565 }}
-      okBtn={t("Save")}
-      cancelBtn={t("Cancel")}
+      okBtn={t("shared.actions.save")}
+      cancelBtn={t("shared.actions.cancel")}
       onClose={() => setOpen(false)}
       onCancel={() => setOpen(false)}
       onOk={onSave}
@@ -429,32 +452,37 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
       disableOk={saving}
     >
       <List>
-        <BaseFieldset label={t("Current System Proxy")} padding="15px 10px">
+        <BaseFieldset
+          label={t("settings.modals.sysproxy.fieldsets.currentStatus")}
+          padding="15px 10px"
+        >
           <FlexBox>
-            <Typography className="label">{t("Enable status")}</Typography>
+            <Typography className="label">
+              {t("settings.modals.sysproxy.fields.enableStatus")}
+            </Typography>
             <Typography className="value">
               {value.pac
                 ? autoproxy?.enable
-                  ? t("Enabled")
-                  : t("Disabled")
+                  ? t("shared.statuses.enabled")
+                  : t("shared.statuses.disabled")
                 : sysproxy?.enable
-                  ? t("Enabled")
-                  : t("Disabled")}
+                  ? t("shared.statuses.enabled")
+                  : t("shared.statuses.disabled")}
             </Typography>
           </FlexBox>
           {!value.pac && (
-            <>
-              <FlexBox>
-                <Typography className="label">{t("Server Addr")}</Typography>
-                <Typography className="value">
-                  {getSystemProxyAddress}
-                </Typography>
-              </FlexBox>
-            </>
+            <FlexBox>
+              <Typography className="label">
+                {t("settings.modals.sysproxy.fields.serverAddr")}
+              </Typography>
+              <Typography className="value">{getSystemProxyAddress}</Typography>
+            </FlexBox>
           )}
           {value.pac && (
             <FlexBox>
-              <Typography className="label">{t("PAC URL")}</Typography>
+              <Typography className="label">
+                {t("settings.modals.sysproxy.fields.pacUrl")}
+              </Typography>
               <Typography className="value">
                 {getCurrentPacUrl || "-"}
               </Typography>
@@ -462,7 +490,9 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
           )}
         </BaseFieldset>
         <ListItem sx={{ padding: "5px 2px" }}>
-          <ListItemText primary={t("Proxy Host")} />
+          <ListItemText
+            primary={t("settings.modals.sysproxy.fields.proxyHost")}
+          />
           <Autocomplete
             size="small"
             sx={{ width: 150 }}
@@ -487,7 +517,9 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
           />
         </ListItem>
         <ListItem sx={{ padding: "5px 2px" }}>
-          <ListItemText primary={t("Use PAC Mode")} />
+          <ListItemText
+            primary={t("settings.modals.sysproxy.fields.usePacMode")}
+          />
           <Switch
             edge="end"
             disabled={!enabled}
@@ -498,10 +530,13 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
 
         <ListItem sx={{ padding: "5px 2px" }}>
           <ListItemText
-            primary={t("Proxy Guard")}
+            primary={t("settings.modals.sysproxy.fields.proxyGuard")}
             sx={{ maxWidth: "fit-content" }}
           />
-          <TooltipIcon title={t("Proxy Guard Info")} sx={{ opacity: "0.7" }} />
+          <TooltipIcon
+            title={t("settings.modals.sysproxy.tooltips.proxyGuard")}
+            sx={{ opacity: "0.7" }}
+          />
           <Switch
             edge="end"
             disabled={!enabled}
@@ -512,7 +547,9 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
         </ListItem>
 
         <ListItem sx={{ padding: "5px 2px" }}>
-          <ListItemText primary={t("Guard Duration")} />
+          <ListItemText
+            primary={t("settings.modals.sysproxy.fields.guardDuration")}
+          />
           <TextField
             disabled={!enabled}
             size="small"
@@ -533,91 +570,125 @@ export const SysproxyViewer = forwardRef<DialogRef>((props, ref) => {
         </ListItem>
         {!value.pac && (
           <ListItem sx={{ padding: "5px 2px" }}>
-            <ListItemText primary={t("Always use Default Bypass")} />
+            <ListItemText
+              primary={t(
+                "settings.modals.sysproxy.fields.alwaysUseDefaultBypass",
+              )}
+            />
             <Switch
               edge="end"
               disabled={!enabled}
               checked={value.use_default}
+              onChange={(_, e) => {
+                if (!e && !value.bypass) {
+                  const nextBypass = defaultBypass();
+                  setValue((v) => ({
+                    ...v,
+                    use_default: e,
+                    // 当取消选择use_default且当前bypass为空时，填充默认值
+                    bypass: nextBypass,
+                  }));
+                  return;
+                }
+                setValue((v) => ({ ...v, use_default: e }));
+              }}
+            />
+          </ListItem>
+        )}
+
+        {!value.pac && (
+          <ListItem sx={{ padding: "5px 2px" }}>
+            <ListItemText
+              primary={t("settings.modals.sysproxy.fields.enableBypassCheck")}
+            />
+            <Switch
+              edge="end"
+              disabled={!enabled}
+              checked={value.enable_bypass_check}
               onChange={(_, e) =>
-                setValue((v) => ({
-                  ...v,
-                  use_default: e,
-                  // 当取消选择use_default且当前bypass为空时，填充默认值
-                  bypass: !e && !v.bypass ? defaultBypass() : v.bypass,
-                }))
+                setValue((v) => ({ ...v, enable_bypass_check: e }))
               }
             />
           </ListItem>
         )}
 
         {!value.pac && !value.use_default && (
-          <>
-            <ListItemText primary={t("Proxy Bypass")} />
-            <TextField
-              error={value.bypass ? !validReg.test(value.bypass) : false}
-              disabled={!enabled}
-              size="small"
-              multiline
-              rows={4}
-              sx={{ width: "100%" }}
-              value={value.bypass}
-              onChange={(e) => {
-                setValue((v) => ({ ...v, bypass: e.target.value }));
-              }}
-            />
-          </>
+          <BaseSplitChipEditor
+            value={value.bypass ?? ""}
+            separator={separator}
+            disabled={!enabled}
+            error={bypassError}
+            helperText={
+              bypassError
+                ? t("settings.modals.sysproxy.messages.invalidBypass")
+                : undefined
+            }
+            placeholder="localhost"
+            ariaLabel={t("settings.modals.sysproxy.fields.proxyBypass")}
+            onChange={(nextValue) => {
+              setValue((v) => ({ ...v, bypass: nextValue }));
+            }}
+            renderHeader={(modeToggle) => (
+              <ListItem sx={{ padding: "5px 2px" }}>
+                <ListItemText
+                  primary={t("settings.modals.sysproxy.fields.proxyBypass")}
+                />
+                {modeToggle ? (
+                  <Box sx={{ marginLeft: "auto" }}>{modeToggle}</Box>
+                ) : null}
+              </ListItem>
+            )}
+          />
         )}
 
         {!value.pac && value.use_default && (
           <>
-            <ListItemText primary={t("Bypass")} />
-            <FlexBox>
-              <TextField
-                disabled={true}
-                size="small"
-                multiline
-                rows={4}
-                sx={{ width: "100%" }}
-                value={defaultBypass()}
-              />
-            </FlexBox>
+            <ListItemText
+              primary={t("settings.modals.sysproxy.fields.bypass")}
+            />
+            <Box sx={{ padding: "0 2px 5px" }}>
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+                {splitBypass(defaultBypass()).map((item) => (
+                  <Chip key={item} label={item} size="small" />
+                ))}
+              </Box>
+            </Box>
           </>
         )}
 
         {value.pac && (
-          <>
-            <ListItem sx={{ padding: "5px 2px", alignItems: "start" }}>
-              <ListItemText
-                primary={t("PAC Script Content")}
-                sx={{ padding: "3px 0" }}
-              />
-              <Button
-                startIcon={<EditRounded />}
-                variant="outlined"
-                onClick={() => {
-                  setEditorOpen(true);
+          <ListItem sx={{ padding: "5px 2px", alignItems: "start" }}>
+            <ListItemText
+              primary={t("settings.modals.sysproxy.fields.pacScriptContent")}
+              sx={{ padding: "3px 0" }}
+            />
+            <Button
+              startIcon={<EditRounded />}
+              variant="outlined"
+              onClick={() => {
+                setEditorOpen(true);
+              }}
+            >
+              {t("settings.modals.sysproxy.actions.editPac")}
+            </Button>
+            {editorOpen && (
+              <EditorViewer
+                open={true}
+                title={t("settings.modals.sysproxy.actions.editPac")}
+                initialData={() => Promise.resolve(value.pac_content ?? "")}
+                dataKey="sysproxy-pac"
+                language="javascript"
+                onSave={(_prev, curr) => {
+                  let pac = DEFAULT_PAC;
+                  if (curr && curr.trim().length > 0) {
+                    pac = curr;
+                  }
+                  setValue((v) => ({ ...v, pac_content: pac }));
                 }}
-              >
-                {t("Edit")} PAC
-              </Button>
-              {editorOpen && (
-                <EditorViewer
-                  open={true}
-                  title={`${t("Edit")} PAC`}
-                  initialData={Promise.resolve(value.pac_content ?? "")}
-                  language="javascript"
-                  onSave={(_prev, curr) => {
-                    let pac = DEFAULT_PAC;
-                    if (curr && curr.trim().length > 0) {
-                      pac = curr;
-                    }
-                    setValue((v) => ({ ...v, pac_content: pac }));
-                  }}
-                  onClose={() => setEditorOpen(false)}
-                />
-              )}
-            </ListItem>
-          </>
+                onClose={() => setEditorOpen(false)}
+              />
+            )}
+          </ListItem>
         )}
       </List>
     </BaseDialog>

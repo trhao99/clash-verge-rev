@@ -1,69 +1,13 @@
-import { BaseDialog } from "@/components/base";
-import { useClash } from "@/hooks/use-clash";
-import { showNotice } from "@/services/noticeService";
 import { Delete as DeleteIcon } from "@mui/icons-material";
-import {
-  Box,
-  Button,
-  Divider,
-  List,
-  ListItem,
-  styled,
-  TextField,
-} from "@mui/material";
+import { Box, Button, Divider, List, ListItem, TextField } from "@mui/material";
 import { useLockFn, useRequest } from "ahooks";
-import { forwardRef, useImperativeHandle, useState } from "react";
+import { forwardRef, useImperativeHandle, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-// 自定义开关按钮样式
-const ToggleButton = styled("label")`
-  position: relative;
-  display: inline-block;
-  width: 48px;
-  height: 24px;
-
-  input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #e0e0e0;
-    transition: 0.4s;
-    border-radius: 34px;
-
-    &:before {
-      position: absolute;
-      content: "";
-      height: 16px;
-      width: 16px;
-      left: 4px;
-      bottom: 4px;
-      background-color: white;
-      transition: 0.4s;
-      border-radius: 50%;
-    }
-  }
-
-  input:checked + .slider {
-    background-color: #2196f3;
-  }
-
-  input:focus + .slider {
-    box-shadow: 0 0 1px #2196f3;
-  }
-
-  input:checked + .slider:before {
-    transform: translateX(24px);
-  }
-`;
+import { BaseDialog, Switch } from "@/components/base";
+import { useClash } from "@/hooks/use-clash";
+import { restartCore } from "@/services/cmds";
+import { showNotice } from "@/services/notice-service";
 
 // 定义开发环境的URL列表
 // 这些URL在开发模式下会被自动包含在允许的来源中
@@ -75,27 +19,17 @@ const DEV_URLS = [
   "http://localhost:3000",
 ];
 
-// 判断是否处于开发模式
-const isDevMode = import.meta.env.MODE === "development";
-
-// 过滤开发环境URL
-const filterDevOrigins = (origins: string[]) => {
-  if (isDevMode) {
-    return origins;
-  }
-  return origins.filter((origin: string) => !DEV_URLS.includes(origin.trim()));
-};
-
 // 获取完整的源列表，包括开发URL
 const getFullOrigins = (origins: string[]) => {
-  if (!isDevMode) {
-    return origins;
-  }
-
   // 合并现有源和开发URL，并去重
   const allOrigins = [...origins, ...DEV_URLS];
   const uniqueOrigins = [...new Set(allOrigins)];
   return uniqueOrigins;
+};
+
+// 过滤基础URL(确保后续添加)
+const filterBaseOriginsForUI = (origins: string[]) => {
+  return origins.filter((origin: string) => !DEV_URLS.includes(origin.trim()));
 };
 
 // 统一使用的按钮样式
@@ -110,16 +44,6 @@ const buttonStyle = {
   },
   "&:active": {
     transform: "translateY(0)",
-  },
-};
-
-// 保存按钮样式
-const saveButtonStyle = {
-  ...buttonStyle,
-  backgroundColor: "#165DFF",
-  color: "white",
-  "&:hover": {
-    backgroundColor: "#0E42D2",
   },
 };
 
@@ -160,10 +84,10 @@ export const HeaderConfiguration = forwardRef<ClashHeaderConfigingRef>(
       allowOrigins: string[];
     }>(() => {
       const cors = clash?.["external-controller-cors"];
-      const origins = cors?.["allow-origins"] ?? ["*"];
+      const origins = cors?.["allow-origins"] ?? [];
       return {
         allowPrivateNetwork: cors?.["allow-private-network"] ?? true,
-        allowOrigins: filterDevOrigins(origins),
+        allowOrigins: filterBaseOriginsForUI(origins),
       };
     });
 
@@ -211,16 +135,19 @@ export const HeaderConfiguration = forwardRef<ClashHeaderConfigingRef>(
             ),
           },
         });
+        await restartCore();
         await mutateClash();
       },
       {
         manual: true,
         onSuccess: () => {
           setOpen(false);
-          showNotice("success", t("Configuration saved successfully"));
+          showNotice.success(
+            "shared.feedback.notifications.common.saveSuccess",
+          );
         },
         onError: () => {
-          showNotice("error", t("Failed to save configuration"));
+          showNotice.error("shared.feedback.notifications.common.saveFailed");
         },
       },
     );
@@ -228,10 +155,10 @@ export const HeaderConfiguration = forwardRef<ClashHeaderConfigingRef>(
     useImperativeHandle(ref, () => ({
       open: () => {
         const cors = clash?.["external-controller-cors"];
-        const origins = cors?.["allow-origins"] ?? ["*"];
+        const origins = cors?.["allow-origins"] ?? [];
         setCorsConfig({
           allowPrivateNetwork: cors?.["allow-private-network"] ?? true,
-          allowOrigins: filterDevOrigins(origins),
+          allowOrigins: filterBaseOriginsForUI(origins),
         });
         setOpen(true);
       },
@@ -242,13 +169,26 @@ export const HeaderConfiguration = forwardRef<ClashHeaderConfigingRef>(
       await saveConfig();
     });
 
+    const originEntries = useMemo(() => {
+      const counts: Record<string, number> = {};
+      return corsConfig.allowOrigins.map((origin, index) => {
+        const occurrence = (counts[origin] = (counts[origin] ?? 0) + 1);
+        const keyBase = origin || "origin";
+        return {
+          origin,
+          index,
+          key: `${keyBase}-${occurrence}`,
+        };
+      });
+    }, [corsConfig.allowOrigins]);
+
     return (
       <BaseDialog
         open={open}
-        title={t("External Cors Configuration")}
+        title={t("settings.sections.externalCors.title")}
         contentSx={{ width: 500 }}
-        okBtn={loading ? t("Saving...") : t("Save")}
-        cancelBtn={t("Cancel")}
+        okBtn={loading ? t("shared.statuses.saving") : t("shared.actions.save")}
+        cancelBtn={t("shared.actions.cancel")}
         onClose={() => setOpen(false)}
         onCancel={() => setOpen(false)}
         onOk={handleSave}
@@ -262,22 +202,18 @@ export const HeaderConfiguration = forwardRef<ClashHeaderConfigingRef>(
               width="100%"
             >
               <span style={{ fontWeight: "normal" }}>
-                {t("Allow private network access")}
+                {t("settings.sections.externalCors.fields.allowPrivateNetwork")}
               </span>
-              <ToggleButton>
-                <input
-                  type="checkbox"
-                  checked={corsConfig.allowPrivateNetwork}
-                  onChange={(e) =>
-                    handleCorsConfigChange(
-                      "allowPrivateNetwork",
-                      e.target.checked,
-                    )
-                  }
-                  id="private-network-toggle"
-                />
-                <span className="slider"></span>
-              </ToggleButton>
+              <Switch
+                edge="end"
+                checked={corsConfig.allowPrivateNetwork}
+                onChange={(e) =>
+                  handleCorsConfigChange(
+                    "allowPrivateNetwork",
+                    e.target.checked,
+                  )
+                }
+              />
             </Box>
           </ListItem>
 
@@ -286,11 +222,11 @@ export const HeaderConfiguration = forwardRef<ClashHeaderConfigingRef>(
           <ListItem sx={{ padding: "8px 0" }}>
             <div style={{ width: "100%" }}>
               <div style={{ marginBottom: 8, fontWeight: "bold" }}>
-                {t("Allowed Origins")}
+                {t("settings.sections.externalCors.fields.allowedOrigins")}
               </div>
-              {corsConfig.allowOrigins.map((origin, index) => (
+              {originEntries.map(({ origin, index, key }) => (
                 <div
-                  key={index}
+                  key={key}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -303,7 +239,9 @@ export const HeaderConfiguration = forwardRef<ClashHeaderConfigingRef>(
                     sx={{ fontSize: 14, marginRight: 2 }}
                     value={origin}
                     onChange={(e) => handleUpdateOrigin(index, e.target.value)}
-                    placeholder={t("Please enter a valid url")}
+                    placeholder={t(
+                      "settings.sections.externalCors.placeholders.origin",
+                    )}
                     inputProps={{ style: { fontSize: 14 } }}
                   />
                   <Button
@@ -311,7 +249,7 @@ export const HeaderConfiguration = forwardRef<ClashHeaderConfigingRef>(
                     color="error"
                     size="small"
                     onClick={() => handleDeleteOrigin(index)}
-                    disabled={corsConfig.allowOrigins.length <= 1}
+                    disabled={corsConfig.allowOrigins.length <= 0}
                     sx={deleteButtonStyle}
                   >
                     <DeleteIcon fontSize="small" />
@@ -324,27 +262,25 @@ export const HeaderConfiguration = forwardRef<ClashHeaderConfigingRef>(
                 onClick={handleAddOrigin}
                 sx={addButtonStyle}
               >
-                {t("Add")}
+                {t("settings.sections.externalCors.actions.add")}
               </Button>
 
-              {isDevMode && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 8,
+                  backgroundColor: "#f5f5f5",
+                  borderRadius: 4,
+                }}
+              >
                 <div
-                  style={{
-                    marginTop: 12,
-                    padding: 8,
-                    backgroundColor: "#f5f5f5",
-                    borderRadius: 4,
-                  }}
+                  style={{ color: "#666", fontSize: 12, fontStyle: "italic" }}
                 >
-                  <div
-                    style={{ color: "#666", fontSize: 12, fontStyle: "italic" }}
-                  >
-                    {t(
-                      "Development mode: Automatically includes Tauri and localhost origins",
-                    )}
-                  </div>
+                  {t("settings.sections.externalCors.messages.alwaysIncluded", {
+                    urls: DEV_URLS.join(", "),
+                  })}
                 </div>
-              )}
+              </div>
             </div>
           </ListItem>
         </List>

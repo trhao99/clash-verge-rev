@@ -1,6 +1,3 @@
-import { useEffect, useRef, useMemo, useCallback } from "react";
-import { useVerge } from "@/hooks/use-verge";
-import { Box, IconButton, Tooltip, alpha, styled, Grid } from "@mui/material";
 import {
   DndContext,
   closestCenter,
@@ -8,22 +5,26 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragOverlay,
 } from "@dnd-kit/core";
 import { SortableContext } from "@dnd-kit/sortable";
-
-import { useTranslation } from "react-i18next";
-import { TestViewer, TestViewerRef } from "@/components/test/test-viewer";
-import { TestItem } from "@/components/test/test-item";
+import { Add, NetworkCheck } from "@mui/icons-material";
+import { Box, IconButton, Tooltip, alpha, styled, Grid } from "@mui/material";
 import { emit } from "@tauri-apps/api/event";
 import { nanoid } from "nanoid";
-import { Add, NetworkCheck } from "@mui/icons-material";
-import { EnhancedCard } from "./enhanced-card";
+import { useEffect, useRef, useMemo, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 
 // test icons
 import apple from "@/assets/image/test/apple.svg?raw";
 import github from "@/assets/image/test/github.svg?raw";
 import google from "@/assets/image/test/google.svg?raw";
 import youtube from "@/assets/image/test/youtube.svg?raw";
+import { TestItem } from "@/components/test/test-item";
+import { TestViewer, TestViewerRef } from "@/components/test/test-viewer";
+import { useVerge } from "@/hooks/use-verge";
+
+import { EnhancedCard } from "./enhanced-card";
 
 // 自定义滚动条样式
 const ScrollBox = styled(Box)(({ theme }) => ({
@@ -61,7 +62,7 @@ const DEFAULT_TEST_LIST = [
   },
   {
     uid: nanoid(),
-    name: "Youtube",
+    name: "YouTube",
     url: "https://www.youtube.com",
     icon: youtube,
   },
@@ -172,16 +173,16 @@ export const TestCard = () => {
 
   return (
     <EnhancedCard
-      title={t("Website Tests")}
+      title={t("home.components.tests.title")}
       icon={<NetworkCheck />}
       action={
         <Box sx={{ display: "flex", gap: 1 }}>
-          <Tooltip title={t("Test All")} arrow>
+          <Tooltip title={t("tests.page.actions.testAll")} arrow>
             <IconButton size="small" onClick={handleTestAll}>
               <NetworkCheck fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title={t("Create Test")} arrow>
+          <Tooltip title={t("tests.modals.test.title.create")} arrow>
             <IconButton size="small" onClick={handleCreateTest}>
               <Add fontSize="small" />
             </IconButton>
@@ -196,6 +197,7 @@ export const TestCard = () => {
           onDragEnd={onDragEnd}
         >
           {renderTestItems}
+          <DragOverlay />
         </DndContext>
       </ScrollBox>
 

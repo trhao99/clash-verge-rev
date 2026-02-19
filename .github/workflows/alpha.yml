@@ -25,6 +25,7 @@ env:
   TAG_CHANNEL: Alpha
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: short
+  HUSKY: 0
 concurrency:
   group: "${{ github.workflow }} - ${{ github.head_ref || github.ref }}"
 
@@ -34,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check tag and package.json version
         id: check_tag
@@ -63,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Delete Old Alpha Tags Except Latest
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -179,23 +180,23 @@ jobs:
     needs: delete_old_assets
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Fetch UPDATE logs
         id: fetch_update_logs
         run: |
-          if [ -f "UPDATELOG.md" ]; then
-            UPDATE_LOGS=$(awk '/^## v/{if(flag) exit; flag=1} flag' UPDATELOG.md)
+          if [ -f "Changelog.md" ]; then
+            UPDATE_LOGS=$(awk '/^## v/{if(flag) exit; flag=1} flag' Changelog.md)
             if [ -n "$UPDATE_LOGS" ]; then
               echo "Found update logs"
               echo "UPDATE_LOGS<<EOF" >> $GITHUB_ENV
               echo "$UPDATE_LOGS" >> $GITHUB_ENV
               echo "EOF" >> $GITHUB_ENV
             else
-              echo "No update sections found in UPDATELOG.md"
+              echo "No update sections found in Changelog.md"
             fi
           else
-            echo "UPDATELOG.md file not found"
+            echo "Changelog.md file not found"
           fi
         shell: bash
 
@@ -274,7 +275,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
@@ -294,10 +295,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxslt1.1 libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
+      - name: Install x86 OpenSSL (macOS only)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          arch -x86_64 brew install openssl@3
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@3)/include" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@3)/lib" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig" >> $GITHUB_ENV
+
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24.13.1"
 
       - uses: pnpm/action-setup@v4
         name: Install pnpm
@@ -350,7 +360,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
@@ -365,9 +375,9 @@ jobs:
           save-if: false
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24.13.1"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -481,7 +491,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Add Rust Target
         run: rustup target add ${{ matrix.target }}
@@ -493,9 +503,9 @@ jobs:
           save-if: false
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "24.13.1"
 
       - uses: pnpm/action-setup@v4
         name: Install pnpm
@@ -512,8 +522,8 @@ jobs:
 
       - name: Download WebView2 Runtime
         run: |
-          invoke-webrequest -uri https://github.com/westinyang/WebView2RuntimeArchive/releases/download/109.0.1518.78/Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.${{ matrix.arch }}.cab -outfile Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.${{ matrix.arch }}.cab
-          Expand .\Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.${{ matrix.arch }}.cab -F:* ./src-tauri
+          invoke-webrequest -uri https://github.com/westinyang/WebView2RuntimeArchive/releases/download/133.0.3065.92/Microsoft.WebView2.FixedVersionRuntime.133.0.3065.92.${{ matrix.arch }}.cab -outfile Microsoft.WebView2.FixedVersionRuntime.133.0.3065.92.${{ matrix.arch }}.cab
+          Expand .\Microsoft.WebView2.FixedVersionRuntime.133.0.3065.92.${{ matrix.arch }}.cab -F:* ./src-tauri
           Remove-Item .\src-tauri\tauri.windows.conf.json
           Rename-Item .\src-tauri\webview2.${{ matrix.arch }}.json tauri.windows.conf.json
 

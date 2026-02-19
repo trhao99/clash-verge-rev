@@ -1,20 +1,21 @@
-import { useEffect, useMemo, useState } from "react";
-import { useLockFn } from "ahooks";
-import yaml from "js-yaml";
-import { useTranslation } from "react-i18next";
 import {
   DndContext,
-  closestCenter,
+  DragEndEvent,
   KeyboardSensor,
   PointerSensor,
+  closestCenter,
   useSensor,
   useSensors,
-  DragEndEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
+import MonacoEditor from "@monaco-editor/react";
+import {
+  VerticalAlignBottomRounded,
+  VerticalAlignTopRounded,
+} from "@mui/icons-material";
 import {
   Autocomplete,
   Box,
@@ -29,19 +30,25 @@ import {
   TextField,
   styled,
 } from "@mui/material";
+import { useLockFn } from "ahooks";
+import yaml from "js-yaml";
 import {
-  VerticalAlignTopRounded,
-  VerticalAlignBottomRounded,
-} from "@mui/icons-material";
-import { readProfileFile, saveProfileFile } from "@/services/cmds";
-import { Switch } from "@/components/base";
-import getSystem from "@/utils/get-system";
-import { RuleItem } from "@/components/profile/rule-item";
-import { BaseSearchBox } from "../base/base-search-box";
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { useTranslation } from "react-i18next";
 import { Virtuoso } from "react-virtuoso";
-import MonacoEditor from "react-monaco-editor";
+
+import { BaseSearchBox, Switch } from "@/components/base";
+import { RuleItem } from "@/components/profile/rule-item";
+import { readProfileFile, saveProfileFile } from "@/services/cmds";
+import { showNotice } from "@/services/notice-service";
 import { useThemeMode } from "@/services/states";
-import { showNotice } from "@/services/noticeService";
+import type { TranslationKey } from "@/types/generated/i18n-keys";
+import getSystem from "@/utils/get-system";
 
 interface Props {
   groupsUid: string;
@@ -156,7 +163,7 @@ const rules: {
   },
   {
     name: "IN-PORT",
-    example: "7890",
+    example: "7897",
     validator: (value) => portValidator(value),
   },
   {
@@ -232,7 +239,24 @@ const rules: {
   },
 ];
 
+const RULE_TYPE_LABEL_KEYS: Record<string, string> = Object.fromEntries(
+  rules.map((rule) => [
+    rule.name,
+    `rules.modals.editor.ruleTypes.${rule.name}`,
+  ]),
+);
+
 const builtinProxyPolicies = ["DIRECT", "REJECT", "REJECT-DROP", "PASS"];
+
+const PROXY_POLICY_LABEL_KEYS: Record<string, TranslationKey> =
+  builtinProxyPolicies.reduce(
+    (acc, policy) => {
+      acc[policy] =
+        `proxies.components.enums.policies.${policy}` as TranslationKey;
+      return acc;
+    },
+    {} as Record<string, TranslationKey>,
+  );
 
 export const RulesEditorViewer = (props: Props) => {
   const { groupsUid, mergeUid, profileUid, property, open, onClose, onSave } =
@@ -287,8 +311,8 @@ export const RulesEditorViewer = (props: Props) => {
     const { active, over } = event;
     if (over) {
       if (active.id !== over.id) {
-        let activeIndex = prependSeq.indexOf(active.id.toString());
-        let overIndex = prependSeq.indexOf(over.id.toString());
+        const activeIndex = prependSeq.indexOf(active.id.toString());
+        const overIndex = prependSeq.indexOf(over.id.toString());
         setPrependSeq(reorder(prependSeq, activeIndex, overIndex));
       }
     }
@@ -297,15 +321,15 @@ export const RulesEditorViewer = (props: Props) => {
     const { active, over } = event;
     if (over) {
       if (active.id !== over.id) {
-        let activeIndex = appendSeq.indexOf(active.id.toString());
-        let overIndex = appendSeq.indexOf(over.id.toString());
+        const activeIndex = appendSeq.indexOf(active.id.toString());
+        const overIndex = appendSeq.indexOf(over.id.toString());
         setAppendSeq(reorder(appendSeq, activeIndex, overIndex));
       }
     }
   };
-  const fetchContent = async () => {
-    let data = await readProfileFile(property);
-    let obj = yaml.load(data) as ISeqProfileConfig | null;
+  const fetchContent = useCallback(async () => {
+    const data = await readProfileFile(property);
+    const obj = yaml.load(data) as ISeqProfileConfig | null;
 
     setPrependSeq(obj?.prepend || []);
     setAppendSeq(obj?.append || []);
@@ -313,57 +337,84 @@ export const RulesEditorViewer = (props: Props) => {
 
     setPrevData(data);
     setCurrData(data);
-  };
+  }, [property]);
 
   useEffect(() => {
-    if (currData === "") return;
-    if (visualization !== true) return;
+    if (currData === "" || visualization !== true) {
+      return;
+    }
 
-    let obj = yaml.load(currData) as ISeqProfileConfig | null;
-    setPrependSeq(obj?.prepend || []);
-    setAppendSeq(obj?.append || []);
-    setDeleteSeq(obj?.delete || []);
-  }, [visualization]);
+    const obj = yaml.load(currData) as ISeqProfileConfig | null;
+    startTransition(() => {
+      setPrependSeq(obj?.prepend ?? []);
+      setAppendSeq(obj?.append ?? []);
+      setDeleteSeq(obj?.delete ?? []);
+    });
+  }, [currData, visualization]);
 
   // 优化：异步处理大数据yaml.dump，避免UI卡死
   useEffect(() => {
-    if (prependSeq && appendSeq && deleteSeq) {
-      const serialize = () => {
-        try {
-          setCurrData(
-            yaml.dump(
-              { prepend: prependSeq, append: appendSeq, delete: deleteSeq },
-              { forceQuotes: true },
-            ),
-          );
-        } catch (e: any) {
-          showNotice("error", e?.message || e?.toString() || "YAML dump error");
-        }
-      };
-      if (window.requestIdleCallback) {
-        window.requestIdleCallback(serialize);
-      } else {
-        setTimeout(serialize, 0);
-      }
+    if (!(prependSeq && appendSeq && deleteSeq)) {
+      return;
     }
+
+    const serialize = () => {
+      try {
+        setCurrData(
+          yaml.dump(
+            { prepend: prependSeq, append: appendSeq, delete: deleteSeq },
+            { forceQuotes: true },
+          ),
+        );
+      } catch (error) {
+        showNotice.error(error ?? "YAML dump error");
+      }
+    };
+    let idleId: number | undefined;
+    let timeoutId: number | undefined;
+    if (window.requestIdleCallback) {
+      idleId = window.requestIdleCallback(serialize);
+    } else {
+      timeoutId = window.setTimeout(serialize, 0);
+    }
+    return () => {
+      if (idleId !== undefined && window.cancelIdleCallback) {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    };
   }, [prependSeq, appendSeq, deleteSeq]);
 
-  const fetchProfile = async () => {
-    let data = await readProfileFile(profileUid); // 原配置文件
-    let groupsData = await readProfileFile(groupsUid); // groups配置文件
-    let mergeData = await readProfileFile(mergeUid); // merge配置文件
-    let globalMergeData = await readProfileFile("Merge"); // global merge配置文件
+  const fetchProfile = useCallback(async () => {
+    const data = await readProfileFile(profileUid); // 原配置文件
+    const groupsData = await readProfileFile(groupsUid); // groups配置文件
+    const mergeData = await readProfileFile(mergeUid); // merge配置文件
+    const globalMergeData = await readProfileFile("Merge"); // global merge配置文件
 
-    let rulesObj = yaml.load(data) as { rules: [] } | null;
+    const rulesObj = yaml.load(data) as { rules: [] } | null;
 
-    let originGroupsObj = yaml.load(data) as { "proxy-groups": [] } | null;
-    let originGroups = originGroupsObj?.["proxy-groups"] || [];
-    let moreGroupsObj = yaml.load(groupsData) as ISeqProfileConfig | null;
-    let morePrependGroups = moreGroupsObj?.["prepend"] || [];
-    let moreAppendGroups = moreGroupsObj?.["append"] || [];
-    let moreDeleteGroups =
-      moreGroupsObj?.["delete"] || ([] as string[] | { name: string }[]);
-    let groups = morePrependGroups.concat(
+    const originGroupsObj = yaml.load(data) as {
+      "proxy-groups": IProxyGroupConfig[];
+    } | null;
+    const originGroups = originGroupsObj?.["proxy-groups"] || [];
+    const moreGroupsObj = yaml.load(groupsData) as ISeqProfileConfig | null;
+    const rawPrependGroups = moreGroupsObj?.["prepend"];
+    const morePrependGroups = Array.isArray(rawPrependGroups)
+      ? (rawPrependGroups as IProxyGroupConfig[])
+      : [];
+    const rawAppendGroups = moreGroupsObj?.["append"];
+    const moreAppendGroups = Array.isArray(rawAppendGroups)
+      ? (rawAppendGroups as IProxyGroupConfig[])
+      : [];
+    const rawDeleteGroups = moreGroupsObj?.["delete"];
+    const moreDeleteGroups: Array<string | { name: string }> = Array.isArray(
+      rawDeleteGroups,
+    )
+      ? (rawDeleteGroups as Array<string | { name: string }>)
+      : [];
+    const groups = morePrependGroups.concat(
       originGroups.filter((group: any) => {
         if (group.name) {
           return !moreDeleteGroups.includes(group.name);
@@ -374,47 +425,65 @@ export const RulesEditorViewer = (props: Props) => {
       moreAppendGroups,
     );
 
-    let originRuleSetObj = yaml.load(data) as { "rule-providers": {} } | null;
-    let originRuleSet = originRuleSetObj?.["rule-providers"] || {};
-    let moreRuleSetObj = yaml.load(mergeData) as {
-      "rule-providers": {};
+    const originRuleSetObj = yaml.load(data) as {
+      "rule-providers": Record<string, unknown>;
     } | null;
-    let moreRuleSet = moreRuleSetObj?.["rule-providers"] || {};
-    let globalRuleSetObj = yaml.load(globalMergeData) as {
-      "rule-providers": {};
+    const originRuleSet = originRuleSetObj?.["rule-providers"] || {};
+    const moreRuleSetObj = yaml.load(mergeData) as {
+      "rule-providers": Record<string, unknown>;
     } | null;
-    let globalRuleSet = globalRuleSetObj?.["rule-providers"] || {};
-    let ruleSet = Object.assign({}, originRuleSet, moreRuleSet, globalRuleSet);
+    const moreRuleSet = moreRuleSetObj?.["rule-providers"] || {};
+    const globalRuleSetObj = yaml.load(globalMergeData) as {
+      "rule-providers": Record<string, unknown>;
+    } | null;
+    const globalRuleSet = globalRuleSetObj?.["rule-providers"] || {};
+    const ruleSet = Object.assign(
+      {},
+      originRuleSet,
+      moreRuleSet,
+      globalRuleSet,
+    );
 
-    let originSubRuleObj = yaml.load(data) as { "sub-rules": {} } | null;
-    let originSubRule = originSubRuleObj?.["sub-rules"] || {};
-    let moreSubRuleObj = yaml.load(mergeData) as { "sub-rules": {} } | null;
-    let moreSubRule = moreSubRuleObj?.["sub-rules"] || {};
-    let globalSubRuleObj = yaml.load(globalMergeData) as {
-      "sub-rules": {};
+    const originSubRuleObj = yaml.load(data) as {
+      "sub-rules": Record<string, unknown>;
     } | null;
-    let globalSubRule = globalSubRuleObj?.["sub-rules"] || {};
-    let subRule = Object.assign({}, originSubRule, moreSubRule, globalSubRule);
+    const originSubRule = originSubRuleObj?.["sub-rules"] || {};
+    const moreSubRuleObj = yaml.load(mergeData) as {
+      "sub-rules": Record<string, unknown>;
+    } | null;
+    const moreSubRule = moreSubRuleObj?.["sub-rules"] || {};
+    const globalSubRuleObj = yaml.load(globalMergeData) as {
+      "sub-rules": Record<string, unknown>;
+    } | null;
+    const globalSubRule = globalSubRuleObj?.["sub-rules"] || {};
+    const subRule = Object.assign(
+      {},
+      originSubRule,
+      moreSubRule,
+      globalSubRule,
+    );
     setProxyPolicyList(
       builtinProxyPolicies.concat(groups.map((group: any) => group.name)),
     );
     setRuleSetList(Object.keys(ruleSet));
     setSubRuleList(Object.keys(subRule));
     setRuleList(rulesObj?.rules || []);
-  };
+  }, [groupsUid, mergeUid, profileUid]);
 
   useEffect(() => {
     if (!open) return;
     fetchContent();
     fetchProfile();
-  }, [open]);
+  }, [fetchContent, fetchProfile, open]);
 
   const validateRule = () => {
     if ((ruleType.required ?? true) && !ruleContent) {
-      throw new Error(t("Rule Condition Required"));
+      throw new Error(
+        t("rules.modals.editor.form.validation.conditionRequired"),
+      );
     }
     if (ruleType.validator && !ruleType.validator(ruleContent)) {
-      throw new Error(t("Invalid Rule"));
+      throw new Error(t("rules.modals.editor.form.validation.invalidRule"));
     }
 
     const condition = (ruleType.required ?? true) ? ruleContent : "";
@@ -426,20 +495,26 @@ export const RulesEditorViewer = (props: Props) => {
   const handleSave = useLockFn(async () => {
     try {
       await saveProfileFile(property, currData);
-      showNotice("success", t("Saved Successfully"));
+      showNotice.success("shared.feedback.notifications.saved");
       onSave?.(prevData, currData);
       onClose();
     } catch (err: any) {
-      showNotice("error", err.toString());
+      showNotice.error(err);
     }
   });
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xl" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="xl"
+      fullWidth
+      disableEnforceFocus={!visualization}
+    >
       <DialogTitle>
         {
           <Box display="flex" justifyContent="space-between">
-            {t("Edit Rules")}
+            {t("rules.modals.editor.title")}
             <Box>
               <Button
                 variant="contained"
@@ -448,7 +523,9 @@ export const RulesEditorViewer = (props: Props) => {
                   setVisualization((prev) => !prev);
                 }}
               >
-                {visualization ? t("Advanced") : t("Visualization")}
+                {visualization
+                  ? t("shared.editorModes.advanced")
+                  : t("shared.editorModes.visualization")}
               </Button>
             </Box>
           </Box>
@@ -467,26 +544,38 @@ export const RulesEditorViewer = (props: Props) => {
               }}
             >
               <Item>
-                <ListItemText primary={t("Rule Type")} />
+                <ListItemText
+                  primary={t("rules.modals.editor.form.labels.type")}
+                />
                 <Autocomplete
                   size="small"
                   sx={{ minWidth: "240px" }}
                   renderInput={(params) => <TextField {...params} />}
                   options={rules}
                   value={ruleType}
-                  getOptionLabel={(option) => option.name}
-                  renderOption={(props, option) => (
-                    <li {...props} title={t(option.name)}>
-                      {option.name}
-                    </li>
-                  )}
+                  getOptionLabel={(option) =>
+                    t(RULE_TYPE_LABEL_KEYS[option.name] ?? option.name)
+                  }
+                  renderOption={(props, option) => {
+                    const { key, ...optionProps } = props;
+                    const label = t(
+                      RULE_TYPE_LABEL_KEYS[option.name] ?? option.name,
+                    );
+                    return (
+                      <li key={key} {...optionProps} title={label}>
+                        {label}
+                      </li>
+                    );
+                  }}
                   onChange={(_, value) => value && setRuleType(value)}
                 />
               </Item>
               <Item
                 sx={{ display: !(ruleType.required ?? true) ? "none" : "" }}
               >
-                <ListItemText primary={t("Rule Content")} />
+                <ListItemText
+                  primary={t("rules.modals.editor.form.labels.content")}
+                />
 
                 {ruleType.name === "RULE-SET" && (
                   <Autocomplete
@@ -523,24 +612,35 @@ export const RulesEditorViewer = (props: Props) => {
                   )}
               </Item>
               <Item>
-                <ListItemText primary={t("Proxy Policy")} />
+                <ListItemText
+                  primary={t("rules.modals.editor.form.labels.proxyPolicy")}
+                />
                 <Autocomplete
                   size="small"
                   sx={{ minWidth: "240px" }}
                   renderInput={(params) => <TextField {...params} />}
                   options={proxyPolicyList}
                   value={proxyPolicy}
-                  renderOption={(props, option) => (
-                    <li {...props} title={t(option)}>
-                      {option}
-                    </li>
-                  )}
+                  getOptionLabel={(option) =>
+                    t(PROXY_POLICY_LABEL_KEYS[option] ?? option)
+                  }
+                  renderOption={(props, option) => {
+                    const { key, ...optionProps } = props;
+                    const label = t(PROXY_POLICY_LABEL_KEYS[option] ?? option);
+                    return (
+                      <li key={key} {...optionProps} title={label}>
+                        {label}
+                      </li>
+                    );
+                  }}
                   onChange={(_, value) => value && setProxyPolicy(value)}
                 />
               </Item>
               {ruleType.noResolve && (
                 <Item>
-                  <ListItemText primary={t("No Resolve")} />
+                  <ListItemText
+                    primary={t("rules.modals.editor.form.toggles.noResolve")}
+                  />
                   <Switch
                     checked={noResolve}
                     onChange={() => setNoResolve(!noResolve)}
@@ -554,15 +654,15 @@ export const RulesEditorViewer = (props: Props) => {
                   startIcon={<VerticalAlignTopRounded />}
                   onClick={() => {
                     try {
-                      let raw = validateRule();
+                      const raw = validateRule();
                       if (prependSeq.includes(raw)) return;
                       setPrependSeq([raw, ...prependSeq]);
                     } catch (err: any) {
-                      showNotice("error", err.message || err.toString());
+                      showNotice.error(err);
                     }
                   }}
                 >
-                  {t("Prepend Rule")}
+                  {t("rules.modals.editor.form.actions.prependRule")}
                 </Button>
               </Item>
               <Item>
@@ -572,15 +672,15 @@ export const RulesEditorViewer = (props: Props) => {
                   startIcon={<VerticalAlignBottomRounded />}
                   onClick={() => {
                     try {
-                      let raw = validateRule();
+                      const raw = validateRule();
                       if (appendSeq.includes(raw)) return;
                       setAppendSeq([...appendSeq, raw]);
                     } catch (err: any) {
-                      showNotice("error", err.message || err.toString());
+                      showNotice.error(err);
                     }
                   }}
                 >
-                  {t("Append Rule")}
+                  {t("rules.modals.editor.form.actions.appendRule")}
                 </Button>
               </Item>
             </List>
@@ -601,7 +701,7 @@ export const RulesEditorViewer = (props: Props) => {
                 }
                 increaseViewportBy={256}
                 itemContent={(index) => {
-                  let shift = filteredPrependSeq.length > 0 ? 1 : 0;
+                  const shift = filteredPrependSeq.length > 0 ? 1 : 0;
                   if (filteredPrependSeq.length > 0 && index === 0) {
                     return (
                       <DndContext
@@ -614,10 +714,10 @@ export const RulesEditorViewer = (props: Props) => {
                             return x;
                           })}
                         >
-                          {filteredPrependSeq.map((item, index) => {
+                          {filteredPrependSeq.map((item) => {
                             return (
                               <RuleItem
-                                key={`${item}-${index}`}
+                                key={item}
                                 type="prepend"
                                 ruleRaw={item}
                                 onDelete={() => {
@@ -632,10 +732,10 @@ export const RulesEditorViewer = (props: Props) => {
                       </DndContext>
                     );
                   } else if (index < filteredRuleList.length + shift) {
-                    let newIndex = index - shift;
+                    const newIndex = index - shift;
                     return (
                       <RuleItem
-                        key={`${filteredRuleList[newIndex]}-${index}`}
+                        key={filteredRuleList[newIndex]}
                         type={
                           deleteSeq.includes(filteredRuleList[newIndex])
                             ? "delete"
@@ -670,10 +770,10 @@ export const RulesEditorViewer = (props: Props) => {
                             return x;
                           })}
                         >
-                          {filteredAppendSeq.map((item, index) => {
+                          {filteredAppendSeq.map((item) => {
                             return (
                               <RuleItem
-                                key={`${item}-${index}`}
+                                key={item}
                                 type="append"
                                 ruleRaw={item}
                                 onDelete={() => {
@@ -697,7 +797,7 @@ export const RulesEditorViewer = (props: Props) => {
             height="100%"
             language="yaml"
             value={currData}
-            theme={themeMode === "light" ? "vs" : "vs-dark"}
+            theme={themeMode === "light" ? "light" : "vs-dark"}
             options={{
               tabSize: 2, // 根据语言类型设置缩进大小
               minimap: {
@@ -718,18 +818,18 @@ export const RulesEditorViewer = (props: Props) => {
               fontLigatures: false, // 连字符
               smoothScrolling: true, // 平滑滚动
             }}
-            onChange={(value) => setCurrData(value)}
+            onChange={(value) => setCurrData(value ?? "")}
           />
         )}
       </DialogContent>
 
       <DialogActions>
         <Button onClick={onClose} variant="outlined">
-          {t("Cancel")}
+          {t("shared.actions.cancel")}
         </Button>
 
         <Button onClick={handleSave} variant="contained">
-          {t("Save")}
+          {t("shared.actions.save")}
         </Button>
       </DialogActions>
     </Dialog>

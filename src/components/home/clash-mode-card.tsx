@@ -1,16 +1,42 @@
-import { useTranslation } from "react-i18next";
-import { Box, Typography, Paper, Stack } from "@mui/material";
-import { useLockFn } from "ahooks";
-import { closeAllConnections } from "@/services/api";
-import { patchClashMode } from "@/services/cmds";
-import { useVerge } from "@/hooks/use-verge";
 import {
+  DirectionsRounded,
   LanguageRounded,
   MultipleStopRounded,
-  DirectionsRounded,
 } from "@mui/icons-material";
+import { Box, Paper, Stack, Typography } from "@mui/material";
+import { useLockFn } from "ahooks";
 import { useMemo } from "react";
-import { useAppData } from "@/providers/app-data-provider";
+import { useTranslation } from "react-i18next";
+import { closeAllConnections } from "tauri-plugin-mihomo-api";
+
+import { useVerge } from "@/hooks/use-verge";
+import { useAppData } from "@/providers/app-data-context";
+import { patchClashMode } from "@/services/cmds";
+import type { TranslationKey } from "@/types/generated/i18n-keys";
+
+const CLASH_MODES = ["rule", "global", "direct"] as const;
+type ClashMode = (typeof CLASH_MODES)[number];
+
+const isClashMode = (mode: string): mode is ClashMode =>
+  (CLASH_MODES as readonly string[]).includes(mode);
+
+const MODE_META: Record<
+  ClashMode,
+  { label: TranslationKey; description: TranslationKey }
+> = {
+  rule: {
+    label: "home.components.clashMode.labels.rule",
+    description: "home.components.clashMode.descriptions.rule",
+  },
+  global: {
+    label: "home.components.clashMode.labels.global",
+    description: "home.components.clashMode.descriptions.global",
+  },
+  direct: {
+    label: "home.components.clashMode.labels.direct",
+    description: "home.components.clashMode.descriptions.direct",
+  },
+};
 
 export const ClashModeCard = () => {
   const { t } = useTranslation();
@@ -18,19 +44,21 @@ export const ClashModeCard = () => {
   const { clashConfig, refreshClashConfig } = useAppData();
 
   // 支持的模式列表
-  const modeList = useMemo(() => ["rule", "global", "direct"] as const, []);
+  const modeList = CLASH_MODES;
 
   // 直接使用API返回的模式，不维护本地状态
   const currentMode = clashConfig?.mode?.toLowerCase();
+  const currentModeKey =
+    typeof currentMode === "string" && isClashMode(currentMode)
+      ? currentMode
+      : undefined;
 
   const modeDescription = useMemo(() => {
-    if (typeof currentMode === "string" && currentMode.length > 0) {
-      return t(
-        `${currentMode[0].toLocaleUpperCase()}${currentMode.slice(1)} Mode Description`,
-      );
+    if (currentModeKey) {
+      return t(MODE_META[currentModeKey].description);
     }
-    return t("Mode Description Not Available");
-  }, [currentMode]);
+    return t("home.components.clashMode.errors.communication");
+  }, [currentModeKey, t]);
 
   // 模式图标映射
   const modeIcons = useMemo(
@@ -43,8 +71,8 @@ export const ClashModeCard = () => {
   );
 
   // 切换模式的处理函数
-  const onChangeMode = useLockFn(async (mode: string) => {
-    if (mode === currentMode) return;
+  const onChangeMode = useLockFn(async (mode: ClashMode) => {
+    if (mode === currentModeKey) return;
     if (verge?.auto_close_connection) {
       closeAllConnections();
     }
@@ -59,7 +87,7 @@ export const ClashModeCard = () => {
   });
 
   // 按钮样式
-  const buttonStyles = (mode: string) => ({
+  const buttonStyles = (mode: ClashMode) => ({
     cursor: "pointer",
     px: 2,
     py: 1.2,
@@ -67,8 +95,8 @@ export const ClashModeCard = () => {
     alignItems: "center",
     justifyContent: "center",
     gap: 1,
-    bgcolor: mode === currentMode ? "primary.main" : "background.paper",
-    color: mode === currentMode ? "primary.contrastText" : "text.primary",
+    bgcolor: mode === currentModeKey ? "primary.main" : "background.paper",
+    color: mode === currentModeKey ? "primary.contrastText" : "text.primary",
     borderRadius: 1.5,
     transition: "all 0.2s ease-in-out",
     position: "relative",
@@ -81,7 +109,7 @@ export const ClashModeCard = () => {
       transform: "translateY(1px)",
     },
     "&::after":
-      mode === currentMode
+      mode === currentModeKey
         ? {
             content: '""',
             position: "absolute",
@@ -127,7 +155,7 @@ export const ClashModeCard = () => {
         {modeList.map((mode) => (
           <Paper
             key={mode}
-            elevation={mode === currentMode ? 2 : 0}
+            elevation={mode === currentModeKey ? 2 : 0}
             onClick={() => onChangeMode(mode)}
             sx={buttonStyles(mode)}
           >
@@ -136,10 +164,10 @@ export const ClashModeCard = () => {
               variant="body2"
               sx={{
                 textTransform: "capitalize",
-                fontWeight: mode === currentMode ? 600 : 400,
+                fontWeight: mode === currentModeKey ? 600 : 400,
               }}
             >
-              {t(mode)}
+              {t(MODE_META[mode].label)}
             </Typography>
           </Paper>
         ))}

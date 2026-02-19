@@ -1,14 +1,8 @@
-import { mutate } from "swr";
-import { forwardRef, useImperativeHandle, useState } from "react";
-import { BaseDialog, DialogRef } from "@/components/base";
-import { useTranslation } from "react-i18next";
-import { useVerge } from "@/hooks/use-verge";
-import { useLockFn } from "ahooks";
-import { LoadingButton } from "@mui/lab";
 import {
-  SwitchAccessShortcutRounded,
   RestartAltRounded,
+  SwitchAccessShortcutRounded,
 } from "@mui/icons-material";
+import { LoadingButton } from "@mui/lab";
 import {
   Box,
   Chip,
@@ -17,16 +11,32 @@ import {
   ListItemButton,
   ListItemText,
 } from "@mui/material";
+import { useLockFn } from "ahooks";
+import type { Ref } from "react";
+import { useImperativeHandle, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { mutate } from "swr";
+import { closeAllConnections, upgradeCore } from "tauri-plugin-mihomo-api";
+
+import { BaseDialog, DialogRef } from "@/components/base";
+import { useVerge } from "@/hooks/use-verge";
 import { changeClashCore, restartCore } from "@/services/cmds";
-import { closeAllConnections, upgradeCore } from "@/services/api";
-import { showNotice } from "@/services/noticeService";
+import { showNotice } from "@/services/notice-service";
 
 const VALID_CORE = [
-  { name: "Mihomo", core: "verge-mihomo", chip: "Release Version" },
-  { name: "Mihomo Alpha", core: "verge-mihomo-alpha", chip: "Alpha Version" },
+  {
+    name: "Mihomo",
+    core: "verge-mihomo",
+    chipKey: "settings.modals.clashCore.variants.release",
+  },
+  {
+    name: "Mihomo Alpha",
+    core: "verge-mihomo-alpha",
+    chipKey: "settings.modals.clashCore.variants.alpha",
+  },
 ];
 
-export const ClashCoreViewer = forwardRef<DialogRef>((props, ref) => {
+export function ClashCoreViewer({ ref }: { ref?: Ref<DialogRef> }) {
   const { t } = useTranslation();
 
   const { verge, mutateVerge } = useVerge();
@@ -52,20 +62,20 @@ export const ClashCoreViewer = forwardRef<DialogRef>((props, ref) => {
       const errorMsg = await changeClashCore(core);
 
       if (errorMsg) {
-        showNotice("error", errorMsg);
+        showNotice.error(errorMsg);
         setChangingCore(null);
         return;
       }
 
       mutateVerge();
-      setTimeout(() => {
+      setTimeout(async () => {
         mutate("getClashConfig");
         mutate("getVersion");
         setChangingCore(null);
       }, 500);
-    } catch (err: any) {
+    } catch (err) {
       setChangingCore(null);
-      showNotice("error", err.message || err.toString());
+      showNotice.error(err);
     }
   });
 
@@ -73,11 +83,13 @@ export const ClashCoreViewer = forwardRef<DialogRef>((props, ref) => {
     try {
       setRestarting(true);
       await restartCore();
-      showNotice("success", t(`Clash Core Restarted`));
+      showNotice.success(
+        t("settings.feedback.notifications.clash.restartSuccess"),
+      );
       setRestarting(false);
-    } catch (err: any) {
+    } catch (err) {
       setRestarting(false);
-      showNotice("error", err.message || err.toString());
+      showNotice.error(err);
     }
   });
 
@@ -86,14 +98,16 @@ export const ClashCoreViewer = forwardRef<DialogRef>((props, ref) => {
       setUpgrading(true);
       await upgradeCore();
       setUpgrading(false);
-      showNotice("success", t(`Core Version Updated`));
+      showNotice.success(
+        t("settings.feedback.notifications.clash.versionUpdated"),
+      );
     } catch (err: any) {
       setUpgrading(false);
-      const errMsg = err.response?.data?.message || err.toString();
+      const errMsg = err?.response?.data?.message ?? String(err);
       const showMsg = errMsg.includes("already using latest version")
-        ? "Already Using Latest Core Version"
+        ? t("settings.feedback.notifications.clash.alreadyLatestVersion")
         : errMsg;
-      showNotice("error", t(showMsg));
+      showNotice.info(showMsg);
     }
   });
 
@@ -102,7 +116,7 @@ export const ClashCoreViewer = forwardRef<DialogRef>((props, ref) => {
       open={open}
       title={
         <Box display="flex" justifyContent="space-between">
-          {t("Clash Core")}
+          {t("settings.sections.clash.form.fields.clashCore")}
           <Box>
             <LoadingButton
               variant="contained"
@@ -114,7 +128,7 @@ export const ClashCoreViewer = forwardRef<DialogRef>((props, ref) => {
               sx={{ marginRight: "8px" }}
               onClick={onUpgrade}
             >
-              {t("Upgrade")}
+              {t("shared.actions.upgrade")}
             </LoadingButton>
             <LoadingButton
               variant="contained"
@@ -125,7 +139,7 @@ export const ClashCoreViewer = forwardRef<DialogRef>((props, ref) => {
               disabled={upgrading}
               onClick={onRestart}
             >
-              {t("Restart")}
+              {t("shared.actions.restart")}
             </LoadingButton>
           </Box>
         </Box>
@@ -139,7 +153,7 @@ export const ClashCoreViewer = forwardRef<DialogRef>((props, ref) => {
         marginTop: "-8px",
       }}
       disableOk
-      cancelBtn={t("Close")}
+      cancelBtn={t("shared.actions.close")}
       onClose={() => setOpen(false)}
       onCancel={() => setOpen(false)}
     >
@@ -155,11 +169,11 @@ export const ClashCoreViewer = forwardRef<DialogRef>((props, ref) => {
             {changingCore === each.core ? (
               <CircularProgress size={20} sx={{ mr: 1 }} />
             ) : (
-              <Chip label={t(`${each.chip}`)} size="small" />
+              <Chip label={t(each.chipKey)} size="small" />
             )}
           </ListItemButton>
         ))}
       </List>
     </BaseDialog>
   );
-});
+}

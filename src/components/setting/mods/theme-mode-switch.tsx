@@ -1,5 +1,5 @@
-import { useTranslation } from "react-i18next";
 import { Button, ButtonGroup } from "@mui/material";
+import { useTranslation } from "react-i18next";
 
 type ThemeValue = IVergeConfig["theme_mode"];
 
@@ -23,7 +23,7 @@ export const ThemeModeSwitch = (props: Props) => {
           onClick={() => onChange?.(mode)}
           sx={{ textTransform: "capitalize" }}
         >
-          {t(`theme.${mode}`)}
+          {t(`settings.sections.appearance.${mode}`)}
         </Button>
       ))}
     </ButtonGroup>

@@ -1,9 +1,10 @@
 import fs from "fs";
 import fsp from "fs/promises";
-import path from "path";
-import AdmZip from "adm-zip";
 import { createRequire } from "module";
-import { getOctokit, context } from "@actions/github";
+import path from "path";
+
+import { context, getOctokit } from "@actions/github";
+import AdmZip from "adm-zip";
 
 const target = process.argv.slice(2)[0];
 const alpha = process.argv.slice(2)[1];
@@ -49,9 +50,9 @@ async function resolvePortable() {
   zip.addLocalFolder(
     path.join(
       releaseDir,
-      `Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.${arch}`,
+      `Microsoft.WebView2.FixedVersionRuntime.133.0.3065.92.${arch}`,
     ),
-    `Microsoft.WebView2.FixedVersionRuntime.109.0.1518.78.${arch}`,
+    `Microsoft.WebView2.FixedVersionRuntime.133.0.3065.92.${arch}`,
   );
   zip.addLocalFolder(configDir, ".config");
 
@@ -79,11 +80,11 @@ async function resolvePortable() {
     tag,
   });
 
-  let assets = release.assets.filter((x) => {
+  const assets = release.assets.filter((x) => {
     return x.name === zipFile;
   });
   if (assets.length > 0) {
-    let id = assets[0].id;
+    const id = assets[0].id;
     await github.rest.repos.deleteReleaseAsset({
       ...options,
       asset_id: id,

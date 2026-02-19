@@ -1,5 +1,3 @@
-import { useEffect } from "react";
-import { useTranslation } from "react-i18next";
 import {
   Button,
   Dialog,
@@ -7,6 +5,8 @@ import {
   DialogContent,
   DialogTitle,
 } from "@mui/material";
+import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
 
 interface Props {
   open: boolean;
@@ -35,10 +35,10 @@ export const ConfirmViewer = (props: Props) => {
 
       <DialogActions>
         <Button onClick={onClose} variant="outlined">
-          {t("Cancel")}
+          {t("shared.actions.cancel")}
         </Button>
         <Button onClick={onConfirm} variant="contained">
-          {t("Confirm")}
+          {t("shared.actions.confirm")}
         </Button>
       </DialogActions>
     </Dialog>

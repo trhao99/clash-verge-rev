@@ -1,61 +1,13 @@
+import { styled, Typography } from "@mui/material";
+import { useLockFn } from "ahooks";
 import { forwardRef, useImperativeHandle, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useLockFn } from "ahooks";
-import { styled, Typography } from "@mui/material";
+
+import { BaseDialog, DialogRef, Switch } from "@/components/base";
 import { useVerge } from "@/hooks/use-verge";
-import { BaseDialog, DialogRef } from "@/components/base";
+import { showNotice } from "@/services/notice-service";
+
 import { HotkeyInput } from "./hotkey-input";
-import { showNotice } from "@/services/noticeService";
-
-// 修复后的自定义开关组件
-const ToggleButton = styled("label")`
-  position: relative;
-  display: inline-block;
-  width: 48px;
-  height: 24px;
-
-  input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #e0e0e0;
-    transition: 0.4s;
-    border-radius: 34px;
-
-    &:before {
-      position: absolute;
-      content: "";
-      height: 16px;
-      width: 16px;
-      left: 4px;
-      bottom: 4px;
-      background-color: white;
-      transition: 0.4s;
-      border-radius: 50%;
-    }
-  }
-
-  input:checked + .slider {
-    background-color: #2196f3;
-  }
-
-  input:focus + .slider {
-    box-shadow: 0 0 1px #2196f3;
-  }
-
-  input:checked + .slider:before {
-    transform: translateX(24px);
-  }
-`;
 
 const ItemWrapper = styled("div")`
   display: flex;
@@ -72,7 +24,21 @@ const HOTKEY_FUNC = [
   "toggle_system_proxy",
   "toggle_tun_mode",
   "entry_lightweight_mode",
-];
+  "reactivate_profiles",
+] as const;
+
+const HOTKEY_FUNC_LABELS: Record<(typeof HOTKEY_FUNC)[number], string> = {
+  open_or_close_dashboard:
+    "settings.modals.hotkey.functions.openOrCloseDashboard",
+  clash_mode_rule: "settings.modals.hotkey.functions.rule",
+  clash_mode_global: "settings.modals.hotkey.functions.global",
+  clash_mode_direct: "settings.modals.hotkey.functions.direct",
+  toggle_system_proxy: "settings.modals.hotkey.functions.toggleSystemProxy",
+  toggle_tun_mode: "settings.modals.hotkey.functions.toggleTunMode",
+  entry_lightweight_mode:
+    "settings.modals.hotkey.functions.entryLightweightMode",
+  reactivate_profiles: "settings.modals.hotkey.functions.reactivateProfiles",
+};
 
 export const HotkeyViewer = forwardRef<DialogRef>((props, ref) => {
   const { t } = useTranslation();
@@ -81,7 +47,7 @@ export const HotkeyViewer = forwardRef<DialogRef>((props, ref) => {
   const { verge, patchVerge } = useVerge();
 
   const [hotkeyMap, setHotkeyMap] = useState<Record<string, string[]>>({});
-  const [enableGlobalHotkey, setEnableHotkey] = useState(
+  const [enableGlobalHotkey, setEnableGlobalHotkey] = useState(
     verge?.enable_global_hotkey ?? true,
   );
 
@@ -129,38 +95,36 @@ export const HotkeyViewer = forwardRef<DialogRef>((props, ref) => {
         enable_global_hotkey: enableGlobalHotkey,
       });
       setOpen(false);
-    } catch (err: any) {
-      showNotice("error", err.toString());
+    } catch (err) {
+      showNotice.error(err);
     }
   });
 
   return (
     <BaseDialog
       open={open}
-      title={t("Hotkey Setting")}
+      title={t("settings.modals.hotkey.title")}
       contentSx={{ width: 450, maxHeight: 380 }}
-      okBtn={t("Save")}
-      cancelBtn={t("Cancel")}
+      okBtn={t("shared.actions.save")}
+      cancelBtn={t("shared.actions.cancel")}
       onClose={() => setOpen(false)}
       onCancel={() => setOpen(false)}
       onOk={onSave}
     >
       <ItemWrapper style={{ marginBottom: 16 }}>
-        <Typography>{t("Enable Global Hotkey")}</Typography>
-        <ToggleButton>
-          <input
-            type="checkbox"
-            checked={enableGlobalHotkey}
-            onChange={(e) => setEnableHotkey(e.target.checked)}
-            id="global-hotkey-toggle"
-          />
-          <span className="slider"></span>
-        </ToggleButton>
+        <Typography>
+          {t("settings.modals.hotkey.toggles.enableGlobal")}
+        </Typography>
+        <Switch
+          edge="end"
+          checked={enableGlobalHotkey}
+          onChange={(e) => setEnableGlobalHotkey(e.target.checked)}
+        />
       </ItemWrapper>
 
       {HOTKEY_FUNC.map((func) => (
         <ItemWrapper key={func}>
-          <Typography>{t(func)}</Typography>
+          <Typography>{t(HOTKEY_FUNC_LABELS[func])}</Typography>
           <HotkeyInput
             value={hotkeyMap[func] ?? []}
             onChange={(v) => setHotkeyMap((m) => ({ ...m, [func]: v }))}

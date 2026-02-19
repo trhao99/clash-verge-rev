@@ -1,4 +1,9 @@
 import {
+  ExpandLessRounded,
+  ExpandMoreRounded,
+  InboxRounded,
+} from "@mui/icons-material";
+import {
   alpha,
   Box,
   ListItemText,
@@ -8,26 +13,23 @@ import {
   Chip,
   Tooltip,
 } from "@mui/material";
-import {
-  ExpandLessRounded,
-  ExpandMoreRounded,
-  InboxRounded,
-} from "@mui/icons-material";
-import { HeadState } from "./use-head-state";
+import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
+
+import { useIconCache } from "@/hooks/use-icon-cache";
+import { useVerge } from "@/hooks/use-verge";
+import { useThemeMode } from "@/services/states";
+
 import { ProxyHead } from "./proxy-head";
 import { ProxyItem } from "./proxy-item";
 import { ProxyItemMini } from "./proxy-item-mini";
+import { HeadState } from "./use-head-state";
 import type { IRenderItem } from "./use-render-list";
-import { useVerge } from "@/hooks/use-verge";
-import { useThemeMode } from "@/services/states";
-import { useEffect, useMemo, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { downloadIconCache } from "@/services/cmds";
-import { useTranslation } from "react-i18next";
 
 interface RenderProps {
   item: IRenderItem;
   indent: boolean;
+  isChainMode?: boolean;
   onLocation: (group: IRenderItem["group"]) => void;
   onCheckAll: (groupName: string) => void;
   onHeadState: (groupName: string, patch: Partial<HeadState>) => void;
@@ -39,32 +41,43 @@ interface RenderProps {
 
 export const ProxyRender = (props: RenderProps) => {
   const { t } = useTranslation();
-  const { indent, item, onLocation, onCheckAll, onHeadState, onChangeProxy } =
-    props;
+  const {
+    indent,
+    item,
+    onLocation,
+    onCheckAll,
+    onHeadState,
+    onChangeProxy,
+    isChainMode: _ = false,
+  } = props;
   const { type, group, headState, proxy, proxyCol } = item;
   const { verge } = useVerge();
   const enable_group_icon = verge?.enable_group_icon ?? true;
   const mode = useThemeMode();
   const isDark = mode === "light" ? false : true;
   const itembackgroundcolor = isDark ? "#282A36" : "#ffffff";
-  const [iconCachePath, setIconCachePath] = useState("");
+  const iconCachePath = useIconCache({
+    icon: group.icon,
+    cacheKey: group.name.replaceAll(" ", ""),
+    enabled: enable_group_icon,
+  });
 
-  useEffect(() => {
-    initIconCachePath();
-  }, [group]);
-
-  async function initIconCachePath() {
-    if (group.icon && group.icon.trim().startsWith("http")) {
-      const fileName =
-        group.name.replaceAll(" ", "") + "-" + getFileName(group.icon);
-      const iconPath = await downloadIconCache(group.icon, fileName);
-      setIconCachePath(convertFileSrc(iconPath));
+  const proxyColItemsMemo = useMemo(() => {
+    if (type !== 4 || !proxyCol) {
+      return null;
     }
-  }
 
-  function getFileName(url: string) {
-    return url.substring(url.lastIndexOf("/") + 1);
-  }
+    return proxyCol.map((proxyItem) => (
+      <ProxyItemMini
+        key={`${item.key}-${proxyItem?.name ?? "unknown"}`}
+        group={group}
+        proxy={proxyItem!}
+        selected={group.now === proxyItem?.name}
+        showType={headState?.showType}
+        onClick={() => onChangeProxy(group, proxyItem!)}
+      />
+    ));
+  }, [type, proxyCol, item.key, group, headState, onChangeProxy]);
 
   if (type === 0) {
     return (
@@ -131,7 +144,7 @@ export const ProxyRender = (props: RenderProps) => {
           }}
         />
         <Box sx={{ display: "flex", alignItems: "center" }}>
-          <Tooltip title={t("Proxy Count")} arrow>
+          <Tooltip title={t("proxies.page.labels.proxyCount")} arrow>
             <Chip
               size="small"
               label={`${group.all.length}`}
@@ -195,18 +208,6 @@ export const ProxyRender = (props: RenderProps) => {
   }
 
   if (type === 4) {
-    const proxyColItemsMemo = useMemo(() => {
-      return proxyCol?.map((proxy) => (
-        <ProxyItemMini
-          key={item.key + proxy.name}
-          group={group}
-          proxy={proxy!}
-          selected={group.now === proxy.name}
-          showType={headState?.showType}
-          onClick={() => onChangeProxy(group, proxy!)}
-        />
-      ));
-    }, [proxyCol, group, headState]);
     return (
       <Box
         sx={{

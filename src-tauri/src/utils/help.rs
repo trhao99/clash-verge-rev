@@ -1,58 +1,50 @@
-use crate::{enhance::seq::SeqMap, logging, utils::logging::Type};
-use anyhow::{anyhow, bail, Context, Result};
+use crate::{config::with_encryption, enhance::seq::SeqMap};
+use anyhow::{Context as _, Result, anyhow, bail};
+use clash_verge_logging::{Type, logging};
 use nanoid::nanoid;
-use serde::{de::DeserializeOwned, Serialize};
-use serde_yaml::Mapping;
-use std::{fs, path::PathBuf, str::FromStr};
+use serde::{Serialize, de::DeserializeOwned};
+use serde_yaml_ng::Mapping;
+#[cfg(target_os = "windows")]
+use std::path::Path;
+use std::{path::PathBuf, str::FromStr};
 
 /// read data from yaml as struct T
-pub fn read_yaml<T: DeserializeOwned>(path: &PathBuf) -> Result<T> {
-    if !path.exists() {
+pub async fn read_yaml<T: DeserializeOwned>(path: &PathBuf) -> Result<T> {
+    if !tokio::fs::try_exists(path).await.unwrap_or(false) {
         bail!("file not found \"{}\"", path.display());
     }
 
-    let yaml_str = fs::read_to_string(path)
-        .with_context(|| format!("failed to read the file \"{}\"", path.display()))?;
+    let yaml_str = tokio::fs::read_to_string(path).await?;
 
-    serde_yaml::from_str::<T>(&yaml_str).with_context(|| {
-        format!(
-            "failed to read the file with yaml format \"{}\"",
-            path.display()
-        )
-    })
+    Ok(with_encryption(|| async { serde_yaml_ng::from_str::<T>(&yaml_str) }).await?)
 }
 
 /// read mapping from yaml
-pub fn read_mapping(path: &PathBuf) -> Result<Mapping> {
-    if !path.exists() {
+pub async fn read_mapping(path: &PathBuf) -> Result<Mapping> {
+    if !tokio::fs::try_exists(path).await.unwrap_or(false) {
         bail!("file not found \"{}\"", path.display());
     }
 
-    let yaml_str = fs::read_to_string(path)
+    let yaml_str = tokio::fs::read_to_string(path)
+        .await
         .with_context(|| format!("failed to read the file \"{}\"", path.display()))?;
 
     // YAML语法检查
-    match serde_yaml::from_str::<serde_yaml::Value>(&yaml_str) {
+    match serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&yaml_str) {
         Ok(mut val) => {
             val.apply_merge()
                 .with_context(|| format!("failed to apply merge \"{}\"", path.display()))?;
 
             Ok(val
                 .as_mapping()
-                .ok_or(anyhow!(
-                    "failed to transform to yaml mapping \"{}\"",
-                    path.display()
-                ))?
+                .ok_or_else(|| anyhow!("failed to transform to yaml mapping \"{}\"", path.display()))?
                 .to_owned())
         }
         Err(err) => {
             let error_msg = format!("YAML syntax error in {}: {}", path.display(), err);
-            logging!(error, Type::Config, true, "{}", error_msg);
+            logging!(error, Type::Config, "{}", error_msg);
 
-            crate::core::handle::Handle::notice_message(
-                "config_validate::yaml_syntax_error",
-                &error_msg,
-            );
+            crate::core::handle::Handle::notice_message("config_validate::yaml_syntax_error", &error_msg);
 
             bail!("YAML syntax error: {}", err)
         }
@@ -60,16 +52,14 @@ pub fn read_mapping(path: &PathBuf) -> Result<Mapping> {
 }
 
 /// read mapping from yaml fix #165
-pub fn read_seq_map(path: &PathBuf) -> Result<SeqMap> {
-    let val: SeqMap = read_yaml(path)?;
-
-    Ok(val)
+pub async fn read_seq_map(path: &PathBuf) -> Result<SeqMap> {
+    read_yaml(path).await
 }
 
 /// save the data to the file
 /// can set `prefix` string to add some comments
-pub fn save_yaml<T: Serialize>(path: &PathBuf, data: &T, prefix: Option<&str>) -> Result<()> {
-    let data_str = serde_yaml::to_string(data)?;
+pub async fn save_yaml<T: Serialize + Sync>(path: &PathBuf, data: &T, prefix: Option<&str>) -> Result<()> {
+    let data_str = with_encryption(|| async { serde_yaml_ng::to_string(data) }).await?;
 
     let yaml_str = match prefix {
         Some(prefix) => format!("{prefix}\n\n{data_str}"),
@@ -77,15 +67,17 @@ pub fn save_yaml<T: Serialize>(path: &PathBuf, data: &T, prefix: Option<&str>) -
     };
 
     let path_str = path.as_os_str().to_string_lossy().to_string();
-    fs::write(path, yaml_str.as_bytes())
-        .with_context(|| format!("failed to save file \"{path_str}\""))
+    tokio::fs::write(path, yaml_str.as_bytes())
+        .await
+        .with_context(|| format!("failed to save file \"{path_str}\""))?;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    Ok(())
 }
 
 const ALPHABET: [char; 62] = [
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i',
-    'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
-    'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
-    'V', 'W', 'X', 'Y', 'Z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
+    'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
 ];
 
 /// generate the uid
@@ -120,7 +112,7 @@ pub fn get_last_part_and_decode(url: &str) -> Option<String> {
 }
 
 /// open file
-pub fn open_file(_: tauri::AppHandle, path: PathBuf) -> Result<()> {
+pub fn open_file(path: PathBuf) -> Result<()> {
     open::that_detached(path.as_os_str())?;
     Ok(())
 }
@@ -145,21 +137,23 @@ pub fn linux_elevator() -> String {
     }
 }
 
-/// return the string literal error
-#[macro_export]
-macro_rules! ret_err {
-    ($str: expr) => {
-        return Err($str.into())
-    };
-}
+#[cfg(target_os = "windows")]
+/// copy the file to the dist path and return the dist path
+pub fn snapshot_path(original_path: &Path) -> Result<PathBuf> {
+    let temp_dir = original_path
+        .parent()
+        .ok_or_else(|| anyhow!("Invalid log path"))?
+        .join("temp");
 
-#[macro_export]
-macro_rules! t {
-    ($en:expr, $zh:expr, $use_zh:expr) => {
-        if $use_zh {
-            $zh
-        } else {
-            $en
-        }
-    };
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let temp_path = temp_dir.join(format!(
+        "{}_{}.log",
+        original_path.file_stem().unwrap_or_default().to_string_lossy(),
+        chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
+    ));
+
+    std::fs::copy(original_path, &temp_path)?;
+
+    Ok(temp_path)
 }
