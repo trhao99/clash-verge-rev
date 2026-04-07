@@ -1,6 +1,6 @@
 use crate::{
     config::{Config, IVerge},
-    core::{CoreManager, handle, hotkey, logger::Logger, sysopt, tray},
+    core::{CoreManager, autostart, handle, hotkey, logger::Logger, sysopt, tray},
     module::{auto_backup::AutoBackupManager, lightweight},
 };
 use anyhow::Result;
@@ -20,13 +20,7 @@ pub async fn patch_clash(patch: &Mapping) -> Result<()> {
             CoreManager::global().restart_core().await?;
         } else {
             if patch.get("mode").is_some() {
-                logging_error!(Type::Tray, tray::Tray::global().update_menu().await);
-                logging_error!(
-                    Type::Tray,
-                    tray::Tray::global()
-                        .update_icon(&Config::verge().await.data_arc())
-                        .await
-                );
+                tray::Tray::global().update_menu_and_icon().await;
             }
             Config::runtime().await.edit_draft(|d| d.patch_config(patch));
             CoreManager::global().update_config().await?;
@@ -218,7 +212,7 @@ async fn process_terminated_flags(update_flags: UpdateFlags, patch: &IVerge) -> 
         handle::Handle::refresh_verge();
     }
     if update_flags.contains(UpdateFlags::LAUNCH) {
-        sysopt::Sysopt::global().update_launch().await?;
+        autostart::update_launch().await?;
     }
     if update_flags.contains(UpdateFlags::LANGUAGE)
         && let Some(language) = &patch.language
